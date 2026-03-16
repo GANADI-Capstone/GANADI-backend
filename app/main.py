@@ -1,0 +1,55 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.core.config import settings
+from app.database import engine, Base
+from app.routers import auth, pets, diagnosis
+
+# 데이터베이스 테이블 생성
+Base.metadata.create_all(bind=engine)
+
+# FastAPI 앱 생성
+app = FastAPI(
+    title="PetCare API",
+    description="반려동물 안구 질환 진단 서비스 API",
+    version="1.0.0"
+)
+
+# CORS 설정
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 라우터 등록
+app.include_router(auth.router, prefix="/api")
+app.include_router(pets.router, prefix="/api")
+app.include_router(diagnosis.router, prefix="/api")
+
+
+@app.get("/")
+def read_root():
+    """헬스 체크"""
+    return {
+        "status": "ok",
+        "service": "PetCare Backend API",
+        "version": "1.0.0"
+    }
+
+
+@app.get("/health")
+def health_check():
+    """상세 헬스 체크"""
+    return {
+        "status": "healthy",
+        "database": "connected",
+        "ai_server": settings.AI_SERVER_URL
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8001, reload=True)
