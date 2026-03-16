@@ -1,9 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 from app.core.config import settings
 from app.database import engine, Base
 from app.routers import auth, pets, diagnosis
+
+# 업로드 디렉토리 생성
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 # 데이터베이스 테이블 생성
 Base.metadata.create_all(bind=engine)
@@ -23,6 +29,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 정적 파일 서빙 (로컬 이미지)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # 라우터 등록
 app.include_router(auth.router, prefix="/api")

@@ -9,6 +9,7 @@ from app.models import DiagnosisResult, Pet, User
 from app.schemas import DiagnosisResponse
 from app.routers.dependencies import get_current_user
 from app.core.config import settings
+from app.core.storage import save_image
 
 router = APIRouter(prefix="/diagnosis", tags=["diagnosis"])
 
@@ -45,10 +46,13 @@ async def analyze_pet_eye(
         # pet의 species를 animal_type으로 변환 (SpeciesEnum -> str)
         animal_type = pet.species.value  # "dog" 또는 "cat"
         
+        # 이미지 파일 읽기
+        image_bytes = await image.read()
+        
+        # 이미지 저장 (S3 또는 로컬)
+        image_url = await save_image(image_bytes, image.filename)
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # 이미지 파일 읽기
-            image_bytes = await image.read()
-            
             # multipart/form-data로 file과 animal_type 전송
             files = {"file": (image.filename, image_bytes, image.content_type)}
             data = {"animal_type": animal_type}
@@ -67,13 +71,10 @@ async def analyze_pet_eye(
             detail=f"AI 서버 오류: {str(e)}"
         )
     
-    # TODO: 이미지를 S3에 업로드하고 URL 받기 (현재는 임시)
-    image_url = f"temp/{image.filename}"
-    
     # 결과 DB 저장
     db_diagnosis = DiagnosisResult(
         pet_id=pet_id,
-        image_url=image_url,
+        image_url=image_url,  # S3 URL 또는 로컬 경로
         animal_type=pet.species,
         predictions=ai_result.get("predictions", {}),
         main_disease=ai_result.get("main_disease"),
