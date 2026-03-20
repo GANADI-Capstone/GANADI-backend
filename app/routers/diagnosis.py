@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Any, Dict
 import httpx
-import json
 
 from app.database import get_db
 from app.models import DiagnosisResult, Pet, User
@@ -86,6 +86,135 @@ async def analyze_pet_eye(
     db.refresh(db_diagnosis)
     
     return db_diagnosis
+
+
+def _predictions_for_ai_server(raw: Any) -> Dict[str, Dict[str, Any]]:
+    """DB JSON → AI 서버 Report/PDF API용 predictions 형식"""
+    if not raw or not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for disease, pred in raw.items():
+        if not isinstance(pred, dict):
+            continue
+        label = pred.get("label")
+        conf = pred.get("confidence")
+        if label is None or conf is None:
+            continue
+        out[str(disease)] = {"label": str(label), "confidence": float(conf)}
+    return out
+
+
+@router.get("/{diagnosis_id}/pdf")
+async def download_diagnosis_pdf(
+    diagnosis_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    진단 결과 기반 PDF 보고서 다운로드.
+    1) AI 서버 /api/ai/report 로 Claude 리포트 생성
+    2) AI 서버 /api/ai/pdf 로 PDF 생성 후 바이너리 반환
+    """
+    diagnosis = (
+        db.query(DiagnosisResult).filter(DiagnosisResult.id == diagnosis_id).first()
+    )
+    if not diagnosis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="진단 결과를 찾을 수 없습니다.",
+        )
+
+    pet = db.query(Pet).filter(Pet.id == diagnosis.pet_id).first()
+    if not pet or pet.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="접근 권한이 없습니다.",
+        )
+
+    animal_type = diagnosis.animal_type.value
+    predictions_payload = _predictions_for_ai_server(diagnosis.predictions)
+    if not predictions_payload:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="저장된 예측 결과가 없어 PDF를 만들 수 없습니다.",
+        )
+
+    report_body = {
+        "animal_type": animal_type,
+        "pet_name": pet.name,
+        "predictions": predictions_payload,
+    }
+
+    timeout = httpx.Timeout(120.0, connect=30.0)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            report_resp = await client.post(
+                f"{settings.AI_SERVER_URL}/api/ai/report",
+                json=report_body,
+            )
+            if report_resp.status_code >= 400:
+                detail = report_resp.text
+                try:
+                    detail = report_resp.json().get("detail", detail)
+                except Exception:
+                    pass
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"AI 리포트 생성 실패: {detail}",
+                )
+
+            report = report_resp.json()
+
+            pdf_body = {
+                "pet_name": pet.name,
+                "animal_type": animal_type,
+                "predictions": predictions_payload,
+                "report": {
+                    "summary": report.get("summary", ""),
+                    "disease_analysis": report.get("disease_analysis") or {},
+                    "visit_urgency": report.get("visit_urgency", "정기검진"),
+                    "vet_required": bool(report.get("vet_required", False)),
+                    "precautions": report.get("precautions") or [],
+                },
+            }
+
+            pdf_resp = await client.post(
+                f"{settings.AI_SERVER_URL}/api/ai/pdf",
+                json=pdf_body,
+            )
+            if pdf_resp.status_code >= 400:
+                detail = pdf_resp.text
+                try:
+                    detail = pdf_resp.json().get("detail", detail)
+                except Exception:
+                    pass
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"AI PDF 생성 실패: {detail}",
+                )
+
+            content = pdf_resp.content
+            if not content or len(content) < 100:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="PDF 파일이 비어 있거나 올바르지 않습니다.",
+                )
+
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"AI 서버 연결 오류: {str(e)}",
+        )
+
+    filename = f"petcare_diagnosis_{diagnosis_id}.pdf"
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.get("/history/{pet_id}", response_model=List[DiagnosisResponse])
