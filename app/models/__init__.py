@@ -32,6 +32,7 @@ class User(Base):
     
     # Relationships
     pets = relationship("Pet", back_populates="owner", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
 
 
 class Vet(Base):
@@ -139,3 +140,20 @@ class Opinion(Base):
 
     diagnosis = relationship("DiagnosisResult", back_populates="opinions")
     vet = relationship("Vet", back_populates="opinions")
+
+
+class Notification(Base):
+    """사용자 알림"""
+    __tablename__ = "notifications"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    message = Column(String(500), nullable=False)
+    type = Column(String(50), nullable=False)
+    is_read = Column(Boolean, default=False, index=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    # Relationships
+    user = relationship("User", back_populates="notifications")

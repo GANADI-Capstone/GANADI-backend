@@ -5,7 +5,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.database import engine, Base
-from app.routers import auth, pets, diagnosis, opinions, vets
+from app.routers import auth, pets, diagnosis, opinions, vets, notifications
 
 # 업로드 디렉토리 생성
 UPLOAD_DIR = Path("uploads")
@@ -39,6 +39,7 @@ app.include_router(pets.router, prefix="/api")
 app.include_router(diagnosis.router, prefix="/api")
 app.include_router(opinions.router, prefix="/api")
 app.include_router(vets.router, prefix="/api")
+app.include_router(notifications.router, prefix="/api")
 
 
 @app.get("/")

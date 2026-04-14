@@ -183,8 +183,23 @@ class OpinionDetailResponse(OpinionResponse):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    name: str
+    role: str
 
 
 class TokenData(BaseModel):
     user_id: Optional[int] = None
     user_type: Optional[str] = None  # "user" or "vet"
+
+
+# ==================== Notification Schemas ====================
+class NotificationResponse(BaseModel):
+    id: int
+    user_id: int
+    message: str
+    type: str
+    is_read: bool
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True

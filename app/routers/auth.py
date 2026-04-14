@@ -60,7 +60,12 @@ def login_user(user_data: UserLogin, db: Session = Depends(get_db)):
         expires_delta=access_token_expires
     )
     
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "name": user.name,
+        "role": "user"
+    }
 
 
 # ==================== Vet Auth ====================
@@ -108,4 +113,9 @@ def login_vet(vet_data: VetLogin, db: Session = Depends(get_db)):
         expires_delta=access_token_expires
     )
     
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "name": vet.name,
+        "role": "vet"
+    }
