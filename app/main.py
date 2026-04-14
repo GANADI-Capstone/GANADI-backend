@@ -5,7 +5,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.database import engine, Base
-from app.routers import auth, pets, diagnosis
+from app.routers import auth, pets, diagnosis, opinions, vets
 
 # 업로드 디렉토리 생성
 UPLOAD_DIR = Path("uploads")
@@ -37,6 +37,8 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.include_router(auth.router, prefix="/api")
 app.include_router(pets.router, prefix="/api")
 app.include_router(diagnosis.router, prefix="/api")
+app.include_router(opinions.router, prefix="/api")
+app.include_router(vets.router, prefix="/api")
 
 
 @app.get("/")
@@ -61,4 +63,4 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8002, reload=True)

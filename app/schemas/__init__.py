@@ -57,10 +57,23 @@ class VetResponse(BaseModel):
     email: str
     name: str
     hospital_name: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    specialty: Optional[str] = None
+    business_hours: Optional[str] = None
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
+
+
+class VetProfileUpdate(BaseModel):
+    """PUT /api/vets/profile 요청 스키마 — 전달된 필드만 부분 업데이트된다."""
+    hospital_name: Optional[str] = Field(None, max_length=255)
+    address: Optional[str] = Field(None, max_length=255)
+    phone: Optional[str] = Field(None, max_length=20)
+    specialty: Optional[str] = Field(None, max_length=255)
+    business_hours: Optional[str] = Field(None, max_length=255)
 
 
 # ==================== Pet Schemas ====================
@@ -121,6 +134,49 @@ class DiagnosisResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+# ==================== Opinion Schemas ====================
+# 소견 요청/작성/조회 DTO. Opinion 모델 하나로 "요청"과 "작성된 소견"을
+# 모두 표현하므로 용도별로 입력 스키마를 분리한다.
+
+class OpinionRequestCreate(BaseModel):
+    """보호자 → 수의사 소견 요청 (POST /api/opinions/request)"""
+    diagnosis_id: int
+    vet_id: int
+    symptom_memo: Optional[str] = None  # 보호자가 남기는 증상 메모
+
+
+class OpinionWrite(BaseModel):
+    """수의사 소견 작성/수정 (POST·PUT /api/opinions/{id})"""
+    content: str = Field(..., min_length=1)     # 소견 본문 (필수)
+    recommendation: Optional[str] = None        # 권고사항 (예: "24시간 이내 내원")
+    visit_required: bool = False                # 병원 방문 권유 여부
+
+
+class OpinionResponse(BaseModel):
+    """단건 조회 / 작성 결과 응답"""
+    id: int
+    diagnosis_id: int
+    vet_id: int
+    content: Optional[str] = None               # 요청 상태면 null
+    recommendation: Optional[str] = None
+    visit_required: bool
+    symptom_memo: Optional[str] = None
+    created_at: datetime
+    answered_at: Optional[datetime] = None      # 작성 전이면 null
+
+    class Config:
+        from_attributes = True
+
+
+class OpinionDetailResponse(OpinionResponse):
+    """목록/상세 조회 응답: 프론트가 추가 API 호출 없이 카드를 그릴 수 있도록
+    수의사·반려동물·진단 결과를 함께 내려준다."""
+    vet_name: Optional[str] = None
+    hospital_name: Optional[str] = None
+    pet_name: Optional[str] = None
+    diagnosis: Optional[DiagnosisResponse] = None
 
 
 # ==================== Auth Schemas ====================

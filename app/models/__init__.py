@@ -35,17 +35,31 @@ class User(Base):
 
 
 class Vet(Base):
-    """수의사"""
+    """수의사 계정 + 병원 프로필
+
+    회원가입 시 email/password/name/hospital_name만 채워지고,
+    프로필 관련 4개 필드(address/phone/specialty/business_hours)는
+    PUT /api/vets/profile 에서 나중에 수정된다.
+    """
     __tablename__ = "vets"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     name = Column(String(100), nullable=False)
     hospital_name = Column(String(255))
-    
+
+    # 병원 프로필 (마이페이지에서 수정, 카카오맵 병원찾기/수의사 카드에 노출)
+    address = Column(String(255), nullable=True)
+    phone = Column(String(20), nullable=True)
+    specialty = Column(String(255), nullable=True)           # 예: "안과, 피부과"
+    business_hours = Column(String(255), nullable=True)      # 예: "평일 09:00-19:00"
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # 이 수의사가 받은/작성한 소견 목록
+    opinions = relationship("Opinion", back_populates="vet", cascade="all, delete-orphan")
 
 
 class Pet(Base):
@@ -89,6 +103,39 @@ class DiagnosisResult(Base):
     report_pdf_url = Column(String(500))
     
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    
+
     # Relationships
     pet = relationship("Pet", back_populates="diagnoses")
+    opinions = relationship("Opinion", back_populates="diagnosis", cascade="all, delete-orphan")
+
+
+class Opinion(Base):
+    """수의사 소견서 (보호자 요청 → 수의사 작성까지의 라이프사이클을 한 테이블로 관리)
+
+    라이프사이클:
+      1. 보호자가 POST /api/opinions/request 로 요청 → 행이 생성되며 content/answered_at 은 null
+      2. 수의사가 POST /api/opinions/{id} 로 작성 → content/recommendation/visit_required/answered_at 채움
+      3. 수의사가 PUT /api/opinions/{id} 로 내용 수정 가능 (answered_at 은 유지)
+
+    "미답변/완료" 필터는 content IS NULL 여부로 판별한다 (별도 상태 컬럼 없음).
+    """
+    __tablename__ = "opinions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    diagnosis_id = Column(Integer, ForeignKey("diagnosis_results.id"), nullable=False, index=True)
+    vet_id = Column(Integer, ForeignKey("vets.id"), nullable=False, index=True)
+
+    # 수의사 작성 영역 — 요청 시점에는 null, 작성되면 채워짐
+    content = Column(Text, nullable=True)                    # 소견 본문
+    recommendation = Column(Text, nullable=True)             # 권고사항
+    visit_required = Column(Boolean, default=False)          # 병원 방문 권유 여부
+
+    # 보호자 요청 영역 — 요청 시 전달한 증상 메모 (수의사가 참고)
+    symptom_memo = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)  # 요청 접수 시각
+    answered_at = Column(DateTime, nullable=True)                       # 수의사가 최초 작성한 시각
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    diagnosis = relationship("DiagnosisResult", back_populates="opinions")
+    vet = relationship("Vet", back_populates="opinions")
