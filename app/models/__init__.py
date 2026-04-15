@@ -27,6 +27,9 @@ class User(Base):
     phone = Column(String(20))
     kakao_id = Column(String(255), unique=True, index=True)
     
+    role = Column(String(20), default="user", nullable=False)
+    is_suspended = Column(Boolean, default=False, nullable=False)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -55,6 +58,8 @@ class Vet(Base):
     phone = Column(String(20), nullable=True)
     specialty = Column(String(255), nullable=True)           # 예: "안과, 피부과"
     business_hours = Column(String(255), nullable=True)      # 예: "평일 09:00-19:00"
+
+    approval_status = Column(String(20), default="pending", nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
