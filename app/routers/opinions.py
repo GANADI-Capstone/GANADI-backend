@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models import DiagnosisResult, Opinion, Pet, User, Vet
+from app.models import DiagnosisResult, Notification, Opinion, Pet, User, Vet
 from app.routers.dependencies import get_current_user, get_current_vet
 from app.schemas import (
     OpinionDetailResponse,
@@ -137,8 +137,10 @@ def write_opinion(
     - 성공 시 answered_at 을 서버 시각으로 기록
     """
 
+    # 알림 생성 시 보호자(owner_id) 를 알아야 하므로 diagnosis→pet 을 함께 로드한다.
     opinion = (
         db.query(Opinion)
+        .options(joinedload(Opinion.diagnosis).joinedload(DiagnosisResult.pet))
         .filter(Opinion.id == opinion_id, Opinion.vet_id == current_vet.id)
         .first()
     )
@@ -160,11 +162,19 @@ def write_opinion(
     opinion.visit_required = payload.visit_required
     opinion.answered_at = datetime.utcnow()
 
+    # 항목 12: 소견 "최초 작성 완료" 시점에만 보호자 알림 발송 (PUT 수정 시에는 보내지 않음).
+    # 소견과 알림을 같은 트랜잭션에 묶어 한 번에 커밋 → 소견만 저장되고 알림이 누락되는 경우를 차단.
+    owner_id = opinion.diagnosis.pet.owner_id
+    notification = Notification(
+        user_id=owner_id,
+        message=f"{current_vet.name} 수의사가 소견을 작성했습니다.",
+        type="opinion_answered",
+    )
+    db.add(notification)
+
     db.commit()
     db.refresh(opinion)
 
-    # TODO(항목 12): 보호자 담당자가 notifications 테이블을 만든 뒤,
-    # 이 지점에서 보호자에게 "소견이 도착했습니다" 알림을 생성하도록 연결.
     return opinion
 
 

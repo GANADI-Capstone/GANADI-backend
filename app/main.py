@@ -4,15 +4,17 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from app.core.config import settings
-from app.database import engine, Base
 from app.routers import auth, pets, diagnosis, opinions, vets, notifications
 
 # 업로드 디렉토리 생성
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# 데이터베이스 테이블 생성
-Base.metadata.create_all(bind=engine)
+# 스키마는 alembic 을 단일 소스로 관리한다.
+# 과거에는 기동 시 Base.metadata.create_all(bind=engine) 로 자동 생성했으나,
+# 모델만 수정하고 마이그레이션을 빼먹어도 DB 가 바뀌어버려
+# 팀원 간 스키마 불일치의 원인이 되므로 제거했다.
+# 신규 테이블/컬럼은 반드시 `alembic revision --autogenerate` + `alembic upgrade head` 로 반영한다.
 
 # FastAPI 앱 생성
 app = FastAPI(
