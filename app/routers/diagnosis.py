@@ -217,6 +217,20 @@ async def download_diagnosis_pdf(
     )
 
 
+@router.get("/history", response_model=List[DiagnosisResponse])
+def get_all_diagnosis_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """현재 사용자의 전체 진단 이력 조회"""
+    
+    diagnoses = db.query(DiagnosisResult).join(Pet).filter(
+        Pet.owner_id == current_user.id
+    ).order_by(DiagnosisResult.created_at.desc()).all()
+    
+    return diagnoses
+
+
 @router.get("/history/{pet_id}", response_model=List[DiagnosisResponse])
 def get_diagnosis_history(
     pet_id: int,

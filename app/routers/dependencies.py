@@ -75,3 +75,43 @@ def get_current_vet(
         )
     
     return vet
+
+
+def get_current_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    현재 로그인한 관리자 반환 (role="admin"인 User만 허용)
+    
+    Usage:
+        @router.get("/admin-protected")
+        def admin_route(admin: User = Depends(get_current_admin)):
+            ...
+    """
+    
+    token = credentials.credentials
+    payload = decode_access_token(token)
+    
+    if not payload or payload.get("type") != "user":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="인증 정보가 유효하지 않습니다."
+        )
+    
+    user_id = payload.get("sub")
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="사용자를 찾을 수 없습니다."
+        )
+    
+    if not hasattr(user, 'role') or user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="관리자 권한이 필요합니다."
+        )
+    
+    return user
