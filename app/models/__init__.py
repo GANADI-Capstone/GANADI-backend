@@ -143,6 +143,11 @@ class Opinion(Base):
     answered_at = Column(DateTime, nullable=True)                       # 수의사가 최초 작성한 시각
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # 수의사가 작성 시 설정 가능(원 단위). 보호자 평점/리뷰는 작성 완료 후 별도 API 로 저장.
+    service_fee = Column(Integer, nullable=True)
+    owner_rating = Column(Integer, nullable=True)
+    owner_review = Column(Text, nullable=True)
+
     diagnosis = relationship("DiagnosisResult", back_populates="opinions")
     vet = relationship("Vet", back_populates="opinions")
 
@@ -162,3 +167,23 @@ class Notification(Base):
     
     # Relationships
     user = relationship("User", back_populates="notifications")
+
+
+class AdminReport(Base):
+    """관리자가 처리하는 신고 (피그마 신고 관리 탭 대응)
+
+    보호자가 POST /api/reports 로 접수하고, 관리자가 상태를 갱신한다.
+    """
+
+    __tablename__ = "admin_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reporter_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reporter_email = Column(String(255), nullable=True)
+    target_type = Column(String(32), nullable=False)  # vet, user, review, other
+    target_label = Column(String(255), nullable=False)
+    reason = Column(Text, nullable=False)
+    status = Column(String(20), default="pending", nullable=False)  # pending, processing, resolved, dismissed
+    admin_note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

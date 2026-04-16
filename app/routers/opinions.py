@@ -30,6 +30,7 @@ from app.models import DiagnosisResult, Notification, Opinion, Pet, User, Vet
 from app.routers.dependencies import get_current_user, get_current_vet
 from app.schemas import (
     OpinionDetailResponse,
+    OpinionOwnerRating,
     OpinionRequestCreate,
     OpinionResponse,
     OpinionWrite,
@@ -108,7 +109,11 @@ def list_opinion_requests(
     # joinedload 로 diagnosis→pet 까지 한 번에 가져와서 N+1 쿼리를 방지
     query = (
         db.query(Opinion)
-        .options(joinedload(Opinion.diagnosis).joinedload(DiagnosisResult.pet))
+        .options(
+            joinedload(Opinion.diagnosis)
+            .joinedload(DiagnosisResult.pet)
+            .joinedload(Pet.owner),
+        )
         .filter(Opinion.vet_id == current_vet.id)
     )
 
@@ -120,6 +125,32 @@ def list_opinion_requests(
     opinions = query.order_by(Opinion.created_at.desc()).all()
 
     return [_to_detail_response(op, current_vet) for op in opinions]
+
+
+# ==================== 보호자: 내 소견 요청 목록 ====================
+@router.get("/mine", response_model=List[OpinionDetailResponse])
+def list_my_opinions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """보호자가 요청한 소견 목록 (미답변·작성 완료 포함)
+
+    마이페이지 등에서 사용한다. GET /requests(수의사 전용)와 구분된다.
+    """
+
+    opinions = (
+        db.query(Opinion)
+        .options(
+            joinedload(Opinion.vet),
+            joinedload(Opinion.diagnosis).joinedload(DiagnosisResult.pet),
+        )
+        .join(DiagnosisResult, Opinion.diagnosis_id == DiagnosisResult.id)
+        .join(Pet, Pet.id == DiagnosisResult.pet_id)
+        .filter(Pet.owner_id == current_user.id)
+        .order_by(Opinion.created_at.desc())
+        .all()
+    )
+    return [_to_detail_response(op, op.vet) for op in opinions]
 
 
 # ==================== 수의사: 소견 작성 ====================
@@ -160,6 +191,8 @@ def write_opinion(
     opinion.content = payload.content
     opinion.recommendation = payload.recommendation
     opinion.visit_required = payload.visit_required
+    if payload.service_fee is not None:
+        opinion.service_fee = payload.service_fee
     opinion.answered_at = datetime.utcnow()
 
     # 항목 12: 소견 "최초 작성 완료" 시점에만 보호자 알림 발송 (PUT 수정 시에는 보내지 않음).
@@ -175,6 +208,37 @@ def write_opinion(
     db.commit()
     db.refresh(opinion)
 
+    return opinion
+
+
+# ==================== 보호자: 소견 평점·리뷰 ====================
+@router.patch("/{opinion_id}/rating", response_model=OpinionResponse)
+def owner_rate_opinion(
+    opinion_id: int,
+    payload: OpinionOwnerRating,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    opinion = (
+        db.query(Opinion)
+        .options(joinedload(Opinion.diagnosis).joinedload(DiagnosisResult.pet))
+        .filter(Opinion.id == opinion_id)
+        .first()
+    )
+    if not opinion or opinion.diagnosis.pet.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="소견을 찾을 수 없습니다.",
+        )
+    if opinion.content is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="아직 작성되지 않은 소견에는 평점을 남길 수 없습니다.",
+        )
+    opinion.owner_rating = payload.rating
+    opinion.owner_review = payload.review
+    db.commit()
+    db.refresh(opinion)
     return opinion
 
 
@@ -213,6 +277,8 @@ def update_opinion(
     opinion.content = payload.content
     opinion.recommendation = payload.recommendation
     opinion.visit_required = payload.visit_required
+    if payload.service_fee is not None:
+        opinion.service_fee = payload.service_fee
 
     db.commit()
     db.refresh(opinion)
@@ -268,6 +334,7 @@ def _to_detail_response(opinion: Opinion, vet: Optional[Vet]) -> OpinionDetailRe
     """
     diagnosis = opinion.diagnosis
     pet = diagnosis.pet if diagnosis else None
+    owner = pet.owner if pet else None
 
     return OpinionDetailResponse(
         id=opinion.id,
@@ -279,8 +346,12 @@ def _to_detail_response(opinion: Opinion, vet: Optional[Vet]) -> OpinionDetailRe
         symptom_memo=opinion.symptom_memo,
         created_at=opinion.created_at,
         answered_at=opinion.answered_at,
+        service_fee=opinion.service_fee,
+        owner_rating=opinion.owner_rating,
+        owner_review=opinion.owner_review,
         vet_name=vet.name if vet else None,
         hospital_name=vet.hospital_name if vet else None,
         pet_name=pet.name if pet else None,
+        owner_name=owner.name if owner else None,
         diagnosis=diagnosis,
     )

@@ -152,6 +152,7 @@ class OpinionWrite(BaseModel):
     content: str = Field(..., min_length=1)     # 소견 본문 (필수)
     recommendation: Optional[str] = None        # 권고사항 (예: "24시간 이내 내원")
     visit_required: bool = False                # 병원 방문 권유 여부
+    service_fee: Optional[int] = Field(None, ge=0, description="소견 서비스 금액(원), 선택")
 
 
 class OpinionResponse(BaseModel):
@@ -165,9 +166,18 @@ class OpinionResponse(BaseModel):
     symptom_memo: Optional[str] = None
     created_at: datetime
     answered_at: Optional[datetime] = None      # 작성 전이면 null
+    service_fee: Optional[int] = None
+    owner_rating: Optional[int] = None
+    owner_review: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class OpinionOwnerRating(BaseModel):
+    """보호자: 소견에 대한 별점·리뷰 (작성 완료된 건만)"""
+    rating: int = Field(..., ge=1, le=5)
+    review: Optional[str] = Field(None, max_length=2000)
 
 
 class OpinionDetailResponse(OpinionResponse):
@@ -176,6 +186,7 @@ class OpinionDetailResponse(OpinionResponse):
     vet_name: Optional[str] = None
     hospital_name: Optional[str] = None
     pet_name: Optional[str] = None
+    owner_name: Optional[str] = None
     diagnosis: Optional[DiagnosisResponse] = None
 
 
