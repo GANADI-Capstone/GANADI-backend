@@ -64,3 +64,4 @@ alembic/versions/*.pyc
 # Uploaded files
 uploads/
 temp/
+checkpoints/*.pth
