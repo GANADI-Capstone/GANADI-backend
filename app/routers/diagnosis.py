@@ -207,6 +207,10 @@ async def download_diagnosis_pdf(
             detail=f"AI 서버 연결 오류: {str(e)}",
         )
 
+    # PDF 생성 성공 후 경로 저장
+    diagnosis.report_pdf_url = f"/api/diagnosis/{diagnosis_id}/pdf"
+    db.commit()
+
     filename = f"petcare_diagnosis_{diagnosis_id}.pdf"
     return Response(
         content=content,
