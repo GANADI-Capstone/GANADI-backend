@@ -10,6 +10,10 @@ import os
 UPLOAD_DIR = Path("uploads/pet_images")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# 수의사 자격증/증빙 문서 (이미지 또는 PDF)
+VET_DOCS_DIR = Path("uploads/vet_documents")
+VET_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
 # S3 클라이언트 초기화 (환경변수가 있을 때만)
 s3_client = None
 if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
@@ -100,3 +104,45 @@ async def save_image(file_bytes: bytes, filename: str) -> str:
     
     # S3 실패 또는 미설정 시 로컬 저장
     return await save_image_locally(file_bytes, filename)
+
+
+# ==================== Vet Documents (license, employment proof) ====================
+
+ALLOWED_DOC_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".pdf"}
+MAX_DOC_SIZE_MB = 10
+
+
+def _safe_extension(filename: str) -> str:
+    """파일명에서 안전한 확장자만 추출 (소문자)."""
+    ext = Path(filename).suffix.lower()
+    return ext if ext in ALLOWED_DOC_EXTENSIONS else ""
+
+
+async def save_vet_document(file_bytes: bytes, original_filename: str, kind: str) -> str:
+    """수의사 증빙 문서(면허증, 재직증명서 등) 로컬 저장.
+
+    - kind: "license" 또는 "employment" — 파일명 prefix로 사용
+    - 반환: 상대 경로 (DB 저장용)
+
+    이미지든 PDF든 동일 디렉토리(`uploads/vet_documents/`)에 저장한다.
+    추후 S3 사용 시 이 함수만 교체하면 된다.
+    """
+    if not file_bytes:
+        raise ValueError("빈 파일은 업로드할 수 없습니다.")
+    if len(file_bytes) > MAX_DOC_SIZE_MB * 1024 * 1024:
+        raise ValueError(f"파일 크기는 {MAX_DOC_SIZE_MB}MB 이하여야 합니다.")
+
+    ext = _safe_extension(original_filename)
+    if not ext:
+        raise ValueError(
+            "허용되지 않은 파일 형식입니다. (jpg/jpeg/png/webp/pdf만 가능)"
+        )
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_filename = f"{kind}_{timestamp}_{uuid.uuid4().hex[:8]}{ext}"
+    file_path = VET_DOCS_DIR / unique_filename
+
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+
+    return f"uploads/vet_documents/{unique_filename}"

@@ -30,10 +30,37 @@ class VetListResponse(BaseModel):
     name: str
     hospital_name: Optional[str] = None
     approval_status: str = "pending"
+    license_number: Optional[str] = None
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
+
+
+class VetDetailResponse(BaseModel):
+    """관리자가 수의사 가입 신청 상세를 검토할 때 사용 — 자격증 URL 포함."""
+    id: int
+    email: str
+    name: str
+    hospital_name: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    specialty: Optional[str] = None
+    business_hours: Optional[str] = None
+    license_number: Optional[str] = None
+    license_image_url: Optional[str] = None
+    employment_doc_url: Optional[str] = None
+    approval_status: str = "pending"
+    rejection_reason: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class VetRejectPayload(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=2000)
 
 
 class DailyStatsItem(BaseModel):
@@ -491,61 +518,59 @@ def get_all_vets(
     return vets
 
 
-@router.patch("/vets/{vet_id}/approve", response_model=VetListResponse)
-def approve_vet(
+@router.get("/vets/{vet_id}", response_model=VetDetailResponse)
+def get_vet_detail(
     vet_id: int,
     admin: User = Depends(get_current_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    수의사 승인
-    """
+    """수의사 가입 신청 상세 조회 (자격증 URL 포함)."""
     vet = db.query(Vet).filter(Vet.id == vet_id).first()
-    
     if not vet:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="수의사를 찾을 수 없습니다."
+            status_code=status.HTTP_404_NOT_FOUND, detail="수의사를 찾을 수 없습니다."
         )
-    
-    if not hasattr(vet, 'approval_status'):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Vet 모델에 approval_status 필드가 없습니다. 마이그레이션을 실행해주세요."
-        )
-    
-    vet.approval_status = "approved"
-    db.commit()
-    db.refresh(vet)
-    
     return vet
 
 
-@router.patch("/vets/{vet_id}/reject", response_model=VetListResponse)
-def reject_vet(
+@router.patch("/vets/{vet_id}/approve", response_model=VetDetailResponse)
+def approve_vet(
     vet_id: int,
     admin: User = Depends(get_current_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    수의사 거절
-    """
+    """수의사 가입 승인 (approval_status="approved")."""
     vet = db.query(Vet).filter(Vet.id == vet_id).first()
-    
     if not vet:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="수의사를 찾을 수 없습니다."
+            status_code=status.HTTP_404_NOT_FOUND, detail="수의사를 찾을 수 없습니다."
         )
-    
-    if not hasattr(vet, 'approval_status'):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Vet 모델에 approval_status 필드가 없습니다. 마이그레이션을 실행해주세요."
-        )
-    
-    vet.approval_status = "rejected"
+
+    vet.approval_status = "approved"
+    vet.rejection_reason = None
+    vet.reviewed_at = datetime.utcnow()
     db.commit()
     db.refresh(vet)
-    
+    return vet
+
+
+@router.patch("/vets/{vet_id}/reject", response_model=VetDetailResponse)
+def reject_vet(
+    vet_id: int,
+    payload: VetRejectPayload,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """수의사 가입 반려 — 반려 사유를 함께 저장."""
+    vet = db.query(Vet).filter(Vet.id == vet_id).first()
+    if not vet:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="수의사를 찾을 수 없습니다."
+        )
+
+    vet.approval_status = "rejected"
+    vet.rejection_reason = payload.reason
+    vet.reviewed_at = datetime.utcnow()
+    db.commit()
+    db.refresh(vet)
     return vet

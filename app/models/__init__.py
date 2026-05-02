@@ -59,7 +59,14 @@ class Vet(Base):
     specialty = Column(String(255), nullable=True)           # 예: "안과, 피부과"
     business_hours = Column(String(255), nullable=True)      # 예: "평일 09:00-19:00"
 
+    # 자격증 인증 (회원가입 시 입력 → 관리자 검토 후 approval_status 결정)
+    license_number = Column(String(50), nullable=True)            # 수의사 면허번호
+    license_image_url = Column(String(500), nullable=True)        # 면허증 사본 (이미지/PDF)
+    employment_doc_url = Column(String(500), nullable=True)       # 재직/개업 증명서 (선택)
+
     approval_status = Column(String(20), default="pending", nullable=False)
+    rejection_reason = Column(Text, nullable=True)                # 반려 시 사유
+    reviewed_at = Column(DateTime, nullable=True)                 # 관리자 검토 일시
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
