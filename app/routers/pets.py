@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models import Pet, User
 from app.schemas import PetCreate, PetUpdate, PetResponse
 from app.routers.dependencies import get_current_user
+from app.core.storage import save_image
 
 router = APIRouter(prefix="/pets", tags=["pets"])
 
@@ -121,3 +122,56 @@ def delete_pet(
     db.commit()
     
     return None
+
+
+@router.post("/{pet_id}/profile-image")
+async def upload_pet_profile_image(
+    pet_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """반려동물 프로필 사진 업로드"""
+    
+    # 반려동물 조회 및 소유자 확인
+    pet = db.query(Pet).filter(
+        Pet.id == pet_id,
+        Pet.owner_id == current_user.id
+    ).first()
+    
+    if not pet:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="반려동물을 찾을 수 없습니다."
+        )
+    
+    # 파일 형식 검증
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="이미지 파일만 업로드 가능합니다."
+        )
+    
+    # 파일 크기 검증 (5MB 제한)
+    file_bytes = await file.read()
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="파일 크기는 5MB 이하여야 합니다."
+        )
+    
+    # 이미지 저장 (S3 또는 로컬)
+    try:
+        image_url = await save_image(file_bytes, file.filename or "pet_profile.jpg")
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"이미지 업로드 실패: {str(e)}"
+        )
+    
+    # Pet 모델의 profile_image_url 업데이트
+    pet.profile_image_url = image_url
+    db.commit()
+    db.refresh(pet)
+    
+    return {"profile_image_url": image_url}

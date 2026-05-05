@@ -26,6 +26,7 @@ class User(Base):
     name = Column(String(100), nullable=False)
     phone = Column(String(20))
     kakao_id = Column(String(255), unique=True, index=True)
+    profile_image_url = Column(String(500))
     
     role = Column(String(20), default="user", nullable=False)
     is_suspended = Column(Boolean, default=False, nullable=False)

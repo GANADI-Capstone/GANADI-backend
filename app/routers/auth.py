@@ -62,6 +62,12 @@ def login_user(user_data: UserLogin, db: Session = Depends(get_db)):
             detail="이메일 또는 비밀번호가 올바르지 않습니다."
         )
     
+    if user.is_suspended:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="정지된 계정입니다. 관리자에게 문의하세요."
+        )
+    
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": str(user.id), "type": "user"},
