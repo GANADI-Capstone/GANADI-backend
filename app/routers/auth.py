@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Form
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from datetime import timedelta
 from pydantic import BaseModel, EmailStr
 from typing import Optional
+from urllib.parse import urlparse
 import httpx
 import secrets
 import logging
@@ -216,15 +217,44 @@ def login_vet(vet_data: VetLogin, db: Session = Depends(get_db)):
 # ==================== Kakao OAuth ====================
 class KakaoCallbackRequest(BaseModel):
     code: str
+    # 휴대폰 LAN 접속 등 origin 이 변할 때 frontend 가 명시적으로 알려주도록.
+    # 비어 있으면 settings.KAKAO_REDIRECT_URI fallback.
+    redirect_uri: Optional[str] = None
+
+
+def _resolve_redirect_uri(request: Request, explicit: Optional[str] = None) -> str:
+    """카카오 OAuth redirect_uri 결정.
+
+    우선순위:
+      1) 호출 측이 명시한 explicit (POST body 의 redirect_uri)
+      2) Referer 헤더의 origin + /auth/kakao/callback
+      3) settings.KAKAO_REDIRECT_URI (.env fallback)
+    카카오 콘솔에는 사용 가능한 모든 redirect_uri 가 사전 등록되어 있어야 한다.
+    """
+    if explicit:
+        return explicit
+
+    referer = request.headers.get("referer", "")
+    if referer:
+        parsed = urlparse(referer)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}/auth/kakao/callback"
+    return settings.KAKAO_REDIRECT_URI
 
 
 @router.get("/kakao")
-async def kakao_login():
-    """카카오 로그인 페이지로 리다이렉트"""
+async def kakao_login(request: Request):
+    """카카오 로그인 페이지로 리다이렉트.
+
+    redirect_uri 는 Referer 기반으로 동적으로 결정 — PC(localhost) / 휴대폰(LAN IP)
+    동일 코드로 동작하게 하기 위함.
+    """
+    redirect_uri = _resolve_redirect_uri(request)
+    print(f"[KAKAO] /kakao login start, redirect_uri={redirect_uri}", flush=True)
     kakao_auth_url = (
         f"https://kauth.kakao.com/oauth/authorize"
         f"?client_id={settings.KAKAO_CLIENT_ID}"
-        f"&redirect_uri={settings.KAKAO_REDIRECT_URI}"
+        f"&redirect_uri={redirect_uri}"
         f"&response_type=code"
     )
     return RedirectResponse(url=kakao_auth_url)
@@ -233,6 +263,7 @@ async def kakao_login():
 @router.post("/kakao/callback", response_model=Token)
 async def kakao_callback(
     callback_data: KakaoCallbackRequest,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """
@@ -246,17 +277,18 @@ async def kakao_callback(
     """
     
     # 1. 카카오 액세스 토큰 발급
+    redirect_uri = _resolve_redirect_uri(request, callback_data.redirect_uri)
     token_url = "https://kauth.kakao.com/oauth/token"
     token_data = {
         "grant_type": "authorization_code",
         "client_id": settings.KAKAO_CLIENT_ID,
-        "redirect_uri": settings.KAKAO_REDIRECT_URI,
+        "redirect_uri": redirect_uri,
         "code": callback_data.code,
     }
     if settings.KAKAO_CLIENT_SECRET:
         token_data["client_secret"] = settings.KAKAO_CLIENT_SECRET
 
-    print(f"[KAKAO] redirect_uri={settings.KAKAO_REDIRECT_URI}", flush=True)
+    print(f"[KAKAO] redirect_uri={redirect_uri}", flush=True)
     print(f"[KAKAO] client_id={settings.KAKAO_CLIENT_ID}", flush=True)
     print(f"[KAKAO] client_secret={'(set)' if settings.KAKAO_CLIENT_SECRET else '(empty)'}", flush=True)
     print(f"[KAKAO] code={callback_data.code[:10]}...", flush=True)

@@ -24,9 +24,21 @@ app = FastAPI(
 )
 
 # CORS 설정
+# - 명시 origin 은 .env 의 CORS_ORIGINS (배포 환경 등)
+# - 개발 중 휴대폰 PWA 검증을 위해 같은 LAN 사설 대역(127/localhost/10/172.16-31/192.168) 자동 허용
+LAN_REGEX = (
+    r"^https?:\/\/("
+    r"localhost"
+    r"|127\.0\.0\.1"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r")(:\d+)?$"
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
+    allow_origin_regex=LAN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
