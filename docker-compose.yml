@@ -26,6 +26,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: mysql+pymysql://ganadi_user:${DB_PASSWORD}@mysql:3306/ganadi_local
+      AI_SERVER_URL: http://ai:8000
     depends_on:
       mysql:
         condition: service_healthy
