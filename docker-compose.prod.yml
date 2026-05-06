@@ -1,0 +1,28 @@
+# 프로덕션 오버라이드 — 로컬 MySQL 제거, RDS 사용
+# 사용법: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+
+  # 로컬 MySQL 컨테이너 비활성화 (RDS 사용)
+  mysql:
+    profiles:
+      - local-only
+
+  backend:
+    environment:
+      DATABASE_URL: mysql+pymysql://ganadi_user:${DB_PASSWORD}@${RDS_ENDPOINT}:3306/ganadi_local
+    depends_on: {}
+
+  frontend:
+    build:
+      args:
+        VITE_API_URL: https://ganadi.site
+
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Cloudflare Origin Certificate (HTTPS 설정 후 추가)
+      # - /etc/ssl/ganadi:/etc/ssl/ganadi:ro

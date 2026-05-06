@@ -1,0 +1,13 @@
+venv
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+*.md
+.env
+uploads
+api
+models
+scripts
+docs
