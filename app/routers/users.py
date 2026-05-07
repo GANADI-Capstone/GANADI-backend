@@ -18,6 +18,7 @@ class UserMeResponse(BaseModel):
     email: str
     nickname: str
     phone: Optional[str] = None
+    profile_image_url: Optional[str] = None
 
 
 class UserMeUpdate(BaseModel):
@@ -37,6 +38,7 @@ def get_me(current_user: User = Depends(get_current_user)):
         email=current_user.email,
         nickname=current_user.name,
         phone=current_user.phone,
+        profile_image_url=current_user.profile_image_url,
     )
 
 
@@ -57,6 +59,7 @@ def update_me(
         email=current_user.email,
         nickname=current_user.name,
         phone=current_user.phone,
+        profile_image_url=current_user.profile_image_url,
     )
 
 

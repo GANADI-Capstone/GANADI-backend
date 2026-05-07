@@ -33,6 +33,7 @@ class UserResponse(BaseModel):
     name: str
     phone: Optional[str] = None
     kakao_id: Optional[str] = None
+    profile_image_url: Optional[str] = None
     created_at: datetime
     
     class Config:
@@ -101,6 +102,7 @@ class PetCreate(BaseModel):
 
 class PetUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
+    species: Optional[SpeciesEnum] = None
     breed: Optional[str] = None
     age: Optional[int] = Field(None, ge=0, le=30)
     gender: Optional[GenderEnum] = None
