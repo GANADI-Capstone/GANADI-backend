@@ -1,0 +1,16 @@
+venv
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+*.md
+.env
+uploads
+scripts
+docs
+app
+alembic
+alembic.ini
+requirements.txt
+models/classifier/checkpoints

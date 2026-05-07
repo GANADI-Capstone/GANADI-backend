@@ -12,8 +12,8 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from sqlalchemy import func
+from pydantic import BaseModel, Field
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -186,3 +186,142 @@ def update_my_profile(
     db.commit()
     db.refresh(current_vet)
     return current_vet
+
+
+# ==================== 카카오맵 ↔ GANADI 매칭 ====================
+
+class HospitalLookup(BaseModel):
+    """카카오 로컬 API에서 받은 병원 정보 한 건"""
+    place_id: str = Field(..., description="카카오 place id (문자열)")
+    place_name: str
+    address: Optional[str] = None
+    road_address: Optional[str] = None
+    phone: Optional[str] = None
+    x: float = Field(..., description="경도(longitude)")
+    y: float = Field(..., description="위도(latitude)")
+    distance_m: Optional[float] = None  # 카카오가 알려준 거리
+
+
+class HospitalMatchResult(BaseModel):
+    """매칭 결과 — 카카오 데이터 + GANADI 정보 합본"""
+    place_id: str
+    place_name: str
+    address: Optional[str] = None
+    road_address: Optional[str] = None
+    phone: Optional[str] = None
+    x: float
+    y: float
+    distance_m: Optional[float] = None
+
+    is_ganadi: bool = False
+    vet_id: Optional[int] = None
+    vet_name: Optional[str] = None
+    specialty: Optional[str] = None
+    business_hours: Optional[str] = None
+    rating: Optional[float] = None
+    review_count: int = 0
+
+
+class HospitalMatchRequest(BaseModel):
+    hospitals: List[HospitalLookup]
+
+
+def _normalize(text: Optional[str]) -> str:
+    if not text:
+        return ""
+    return "".join(ch for ch in text.lower() if not ch.isspace())
+
+
+@router.post("/match-hospitals", response_model=List[HospitalMatchResult])
+def match_hospitals(payload: HospitalMatchRequest, db: Session = Depends(get_db)):
+    """카카오 병원 리스트 ↔ GANADI 등록 수의사 매칭.
+
+    - 병원명/주소를 키로 GANADI 에 등록된 승인된(`approved`) 수의사가 있는지 찾는다
+    - 매칭되면 평점/리뷰수/진료과목/영업시간을 함께 채워서 반환
+    - 매칭 안 되면 `is_ganadi=false` 로 카카오 정보만 그대로 돌려준다
+    """
+    if not payload.hospitals:
+        return []
+
+    # GANADI 의 승인된 수의사 전부 미리 로드 (보통 수십~수백 건)
+    approved_vets: List[Vet] = (
+        db.query(Vet).filter(Vet.approval_status == "approved").all()
+    )
+
+    # 평점/리뷰 카운트 일괄 계산 (가입자 수가 많지 않으므로 한 번에)
+    rating_rows = (
+        db.query(
+            Opinion.vet_id,
+            func.avg(Opinion.owner_rating).label("avg_rating"),
+            func.count(Opinion.id).label("review_count"),
+        )
+        .filter(Opinion.owner_rating.isnot(None))
+        .group_by(Opinion.vet_id)
+        .all()
+    )
+    rating_map = {
+        row.vet_id: (
+            round(float(row.avg_rating), 1) if row.avg_rating is not None else None,
+            int(row.review_count or 0),
+        )
+        for row in rating_rows
+    }
+
+    # 병원명을 키로 빠르게 매칭하기 위한 인덱스 (간단한 normalize)
+    name_index: dict[str, Vet] = {}
+    for v in approved_vets:
+        if v.hospital_name:
+            name_index[_normalize(v.hospital_name)] = v
+
+    results: List[HospitalMatchResult] = []
+    for h in payload.hospitals:
+        matched: Optional[Vet] = None
+        norm = _normalize(h.place_name)
+        if norm in name_index:
+            matched = name_index[norm]
+        else:
+            # 부분 일치(양방향 contains) — 카카오 명칭이 길거나 짧아도 잡히도록
+            for key, vet in name_index.items():
+                if not key or not norm:
+                    continue
+                if key in norm or norm in key:
+                    matched = vet
+                    break
+
+        if matched:
+            avg, count = rating_map.get(matched.id, (None, 0))
+            results.append(
+                HospitalMatchResult(
+                    place_id=h.place_id,
+                    place_name=h.place_name,
+                    address=h.address,
+                    road_address=h.road_address,
+                    phone=h.phone,
+                    x=h.x,
+                    y=h.y,
+                    distance_m=h.distance_m,
+                    is_ganadi=True,
+                    vet_id=matched.id,
+                    vet_name=matched.name,
+                    specialty=matched.specialty,
+                    business_hours=matched.business_hours,
+                    rating=avg,
+                    review_count=count,
+                )
+            )
+        else:
+            results.append(
+                HospitalMatchResult(
+                    place_id=h.place_id,
+                    place_name=h.place_name,
+                    address=h.address,
+                    road_address=h.road_address,
+                    phone=h.phone,
+                    x=h.x,
+                    y=h.y,
+                    distance_m=h.distance_m,
+                    is_ganadi=False,
+                )
+            )
+
+    return results

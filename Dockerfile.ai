@@ -1,0 +1,43 @@
+# ── 1단계: 의존성 설치 ────────────────────────────────────────────────────────
+FROM python:3.11-slim AS builder
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libglib2.0-0 libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY api/requirements.txt .
+
+# 1) CPU 전용 PyTorch 먼저 설치 (CUDA 버전 대비 ~2GB 절약)
+RUN pip install --no-cache-dir \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# 2) torch 계열만 제외하고 나머지 설치
+#    (requirements.txt 에 torch 가 있으면 위에서 설치한 CPU 버전을 덮어쓰므로 제외)
+RUN grep -vE "^(torch|torchvision|torchaudio)" requirements.txt \
+    | pip install --no-cache-dir -r /dev/stdin
+
+# ── 2단계: 런타임 ─────────────────────────────────────────────────────────────
+FROM python:3.11-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# AI 서버 코드 + 모델 정의 코드 복사
+# 체크포인트(.pth) 는 docker-compose 볼륨으로 마운트 (이미지에 포함 X)
+COPY api ./api
+COPY models/classifier ./models/classifier
+
+ENV PYTHONPATH=/app
+
+EXPOSE 8000
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

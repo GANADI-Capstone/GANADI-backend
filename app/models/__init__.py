@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON, Enum
 from sqlalchemy.orm import relationship
 from datetime import datetime
+from typing import Optional
 import enum
 
 from app.database import Base
@@ -26,6 +27,7 @@ class User(Base):
     name = Column(String(100), nullable=False)
     phone = Column(String(20))
     kakao_id = Column(String(255), unique=True, index=True)
+    profile_image_url = Column(String(500))
     
     role = Column(String(20), default="user", nullable=False)
     is_suspended = Column(Boolean, default=False, nullable=False)
@@ -59,7 +61,14 @@ class Vet(Base):
     specialty = Column(String(255), nullable=True)           # 예: "안과, 피부과"
     business_hours = Column(String(255), nullable=True)      # 예: "평일 09:00-19:00"
 
+    # 자격증 인증 (회원가입 시 입력 → 관리자 검토 후 approval_status 결정)
+    license_number = Column(String(50), nullable=True)            # 수의사 면허번호
+    license_image_url = Column(String(500), nullable=True)        # 면허증 사본 (이미지/PDF)
+    employment_doc_url = Column(String(500), nullable=True)       # 재직/개업 증명서 (선택)
+
     approval_status = Column(String(20), default="pending", nullable=False)
+    rejection_reason = Column(Text, nullable=True)                # 반려 시 사유
+    reviewed_at = Column(DateTime, nullable=True)                 # 관리자 검토 일시
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -113,6 +122,12 @@ class DiagnosisResult(Base):
     # Relationships
     pet = relationship("Pet", back_populates="diagnoses")
     opinions = relationship("Opinion", back_populates="diagnosis", cascade="all, delete-orphan")
+
+    # 응답 평탄화: Pydantic from_attributes=True 가 그대로 매핑한다.
+    # 라우터에서 joinedload(DiagnosisResult.pet) 로 N+1 을 방지할 것.
+    @property
+    def pet_name(self) -> Optional[str]:
+        return self.pet.name if self.pet else None
 
 
 class Opinion(Base):

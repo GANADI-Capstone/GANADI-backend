@@ -33,6 +33,7 @@ class UserResponse(BaseModel):
     name: str
     phone: Optional[str] = None
     kakao_id: Optional[str] = None
+    profile_image_url: Optional[str] = None
     created_at: datetime
     
     class Config:
@@ -41,10 +42,12 @@ class UserResponse(BaseModel):
 
 # ==================== Vet Schemas ====================
 class VetCreate(BaseModel):
+    """JSON 회원가입 (자격증 미첨부 — 기존 호환용, 신규 가입은 /vet/register-with-docs 권장)"""
     email: EmailStr
     password: str = Field(..., min_length=8)
     name: str = Field(..., min_length=2, max_length=100)
     hospital_name: Optional[str] = None
+    license_number: Optional[str] = Field(None, max_length=50)
 
 
 class VetLogin(BaseModel):
@@ -61,6 +64,12 @@ class VetResponse(BaseModel):
     phone: Optional[str] = None
     specialty: Optional[str] = None
     business_hours: Optional[str] = None
+    license_number: Optional[str] = None
+    license_image_url: Optional[str] = None
+    employment_doc_url: Optional[str] = None
+    approval_status: Optional[str] = None
+    rejection_reason: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:
@@ -76,6 +85,11 @@ class VetProfileUpdate(BaseModel):
     business_hours: Optional[str] = Field(None, max_length=255)
 
 
+class VetRejectRequest(BaseModel):
+    """관리자: 수의사 가입 반려 사유"""
+    reason: str = Field(..., min_length=1, max_length=2000)
+
+
 # ==================== Pet Schemas ====================
 class PetCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -88,6 +102,7 @@ class PetCreate(BaseModel):
 
 class PetUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
+    species: Optional[SpeciesEnum] = None
     breed: Optional[str] = None
     age: Optional[int] = Field(None, ge=0, le=30)
     gender: Optional[GenderEnum] = None
@@ -123,6 +138,7 @@ class DiagnosisCreate(BaseModel):
 class DiagnosisResponse(BaseModel):
     id: int
     pet_id: int
+    pet_name: Optional[str] = None  # 진단 이력 카드에서 반려동물 이름 표시용
     image_url: str
     animal_type: SpeciesEnum
     predictions: dict
@@ -131,7 +147,7 @@ class DiagnosisResponse(BaseModel):
     is_normal: bool
     report_pdf_url: Optional[str] = None
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 

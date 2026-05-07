@@ -27,7 +27,11 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models import DiagnosisResult, Notification, Opinion, Pet, User, Vet
-from app.routers.dependencies import get_current_user, get_current_vet
+from app.routers.dependencies import (
+    get_current_user,
+    get_current_user_or_vet,
+    get_current_vet,
+)
 from app.schemas import (
     OpinionDetailResponse,
     OpinionOwnerRating,
@@ -286,18 +290,74 @@ def update_opinion(
     return opinion
 
 
-# ==================== 보호자: 수신한 소견 상세 조회 ====================
+# ==================== 보호자/수의사: 소견 ID 로 단건 조회 ====================
+# 주의: 가변 path /{diagnosis_id} 보다 반드시 위에 선언되어야 한다.
+# (FastAPI 는 등록 순서대로 매칭하므로 고정 prefix 가 먼저 와야 충돌이 없다.)
+@router.get("/by-id/{opinion_id}", response_model=OpinionDetailResponse)
+def get_opinion_by_id(
+    opinion_id: int,
+    db: Session = Depends(get_db),
+    actor=Depends(get_current_user_or_vet),
+):
+    """소견 ID 로 단건 조회 (보호자/수의사 공용)
+
+    프론트가 OpinionList → OpinionDetail 로 이동할 때 opinion.id 를
+    URL 로 그대로 넘기는데, 기존 GET /{diagnosis_id} 와 의미가 달라
+    404 가 발생했다. 명시적으로 by-id 엔드포인트를 분리해서 해결한다.
+
+    권한:
+      - 보호자: 본인 반려동물의 소견만 조회 가능
+      - 수의사: 본인이 받은(또는 작성한) 소견만 조회 가능
+    """
+
+    opinion = (
+        db.query(Opinion)
+        .options(
+            joinedload(Opinion.vet),
+            joinedload(Opinion.diagnosis).joinedload(DiagnosisResult.pet),
+        )
+        .filter(Opinion.id == opinion_id)
+        .first()
+    )
+
+    if not opinion:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="소견을 찾을 수 없습니다.",
+        )
+
+    if isinstance(actor, Vet):
+        # 수의사: 본인이 받은 소견만
+        if opinion.vet_id != actor.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="이 소견을 조회할 권한이 없습니다.",
+            )
+    else:
+        # 보호자: 본인 반려동물의 소견만
+        if not opinion.diagnosis or not opinion.diagnosis.pet \
+                or opinion.diagnosis.pet.owner_id != actor.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="이 소견을 조회할 권한이 없습니다.",
+            )
+
+    return _to_detail_response(opinion, opinion.vet)
+
+
+# ==================== 보호자: 수신한 소견 상세 조회 (진단 ID 기반) ====================
 @router.get("/{diagnosis_id}", response_model=OpinionDetailResponse)
 def get_opinion_for_owner(
     diagnosis_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """보호자가 특정 진단에 대해 수신한 소견 상세 조회
+    """보호자가 특정 진단에 대해 수신한 "최신" 소견 1건 조회 (진단 ID 기반)
 
     - 본인 반려동물의 진단이어야 조회 가능
     - content 가 채워진(= 수의사가 작성 완료한) 소견만 노출
     - 동일 진단에 여러 수의사 소견이 있을 수 있으므로 answered_at 기준으로 최신 1건 반환
+    - 단건 조회는 GET /opinions/by-id/{opinion_id} 사용 (위)
     """
 
     opinion = (

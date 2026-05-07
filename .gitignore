@@ -64,3 +64,6 @@ alembic/versions/*.pyc
 # Uploaded files
 uploads/
 temp/
+
+# PyTorch models (managed by Git LFS)
+# *.pth tracked by LFS

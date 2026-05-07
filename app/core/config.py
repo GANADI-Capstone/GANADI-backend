@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
     
+    # Kakao OAuth
+    KAKAO_CLIENT_ID: str = "783bb48a7f853f7cabe3821fdf103eab"
+    KAKAO_CLIENT_SECRET: str = "bxuGbL01bXVrR0SqH8Bf3gz72jlO5rkv"
+    KAKAO_REDIRECT_URI: str = "http://localhost:5173/auth/kakao/callback"
+    
     # S3 (선택사항)
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
