@@ -138,6 +138,7 @@ class DiagnosisCreate(BaseModel):
 class DiagnosisResponse(BaseModel):
     id: int
     pet_id: int
+    pet_name: Optional[str] = None  # 진단 이력 카드에서 반려동물 이름 표시용
     image_url: str
     animal_type: SpeciesEnum
     predictions: dict
@@ -146,7 +147,7 @@ class DiagnosisResponse(BaseModel):
     is_normal: bool
     report_pdf_url: Optional[str] = None
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 

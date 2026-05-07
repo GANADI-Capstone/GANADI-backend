@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Any, Dict
 import httpx
 
@@ -226,12 +226,20 @@ def get_all_diagnosis_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """현재 사용자의 전체 진단 이력 조회"""
-    
-    diagnoses = db.query(DiagnosisResult).join(Pet).filter(
-        Pet.owner_id == current_user.id
-    ).order_by(DiagnosisResult.created_at.desc()).all()
-    
+    """현재 사용자의 전체 진단 이력 조회
+
+    응답에 pet_name 이 포함되도록 joinedload(Pet) 으로 미리 가져온다.
+    """
+
+    diagnoses = (
+        db.query(DiagnosisResult)
+        .options(joinedload(DiagnosisResult.pet))
+        .join(Pet, Pet.id == DiagnosisResult.pet_id)
+        .filter(Pet.owner_id == current_user.id)
+        .order_by(DiagnosisResult.created_at.desc())
+        .all()
+    )
+
     return diagnoses
 
 
@@ -254,11 +262,15 @@ def get_diagnosis_history(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="반려동물을 찾을 수 없습니다."
         )
-    
-    diagnoses = db.query(DiagnosisResult).filter(
-        DiagnosisResult.pet_id == pet_id
-    ).order_by(DiagnosisResult.created_at.desc()).all()
-    
+
+    diagnoses = (
+        db.query(DiagnosisResult)
+        .options(joinedload(DiagnosisResult.pet))
+        .filter(DiagnosisResult.pet_id == pet_id)
+        .order_by(DiagnosisResult.created_at.desc())
+        .all()
+    )
+
     return diagnoses
 
 
@@ -269,23 +281,25 @@ def get_diagnosis_detail(
     current_user: User = Depends(get_current_user)
 ):
     """진단 결과 상세 조회"""
-    
-    diagnosis = db.query(DiagnosisResult).filter(
-        DiagnosisResult.id == diagnosis_id
-    ).first()
-    
+
+    diagnosis = (
+        db.query(DiagnosisResult)
+        .options(joinedload(DiagnosisResult.pet))
+        .filter(DiagnosisResult.id == diagnosis_id)
+        .first()
+    )
+
     if not diagnosis:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="진단 결과를 찾을 수 없습니다."
         )
-    
-    # 소유자 확인
-    pet = db.query(Pet).filter(Pet.id == diagnosis.pet_id).first()
-    if not pet or pet.owner_id != current_user.id:
+
+    # 소유자 확인 — joinedload 로 이미 pet 가 로드되어 있으므로 추가 쿼리 없음
+    if not diagnosis.pet or diagnosis.pet.owner_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="접근 권한이 없습니다."
         )
-    
+
     return diagnosis

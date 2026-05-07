@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON, Enum
 from sqlalchemy.orm import relationship
 from datetime import datetime
+from typing import Optional
 import enum
 
 from app.database import Base
@@ -121,6 +122,12 @@ class DiagnosisResult(Base):
     # Relationships
     pet = relationship("Pet", back_populates="diagnoses")
     opinions = relationship("Opinion", back_populates="diagnosis", cascade="all, delete-orphan")
+
+    # 응답 평탄화: Pydantic from_attributes=True 가 그대로 매핑한다.
+    # 라우터에서 joinedload(DiagnosisResult.pet) 로 N+1 을 방지할 것.
+    @property
+    def pet_name(self) -> Optional[str]:
+        return self.pet.name if self.pet else None
 
 
 class Opinion(Base):
