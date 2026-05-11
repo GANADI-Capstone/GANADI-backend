@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from app.core.config import settings
-from app.routers import auth, pets, diagnosis, opinions, vets, notifications, admin, users, reports
+from app.routers import auth, pets, diagnosis, opinions, vets, notifications, admin, users, reports, push
 
 # 업로드 디렉토리 생성
 UPLOAD_DIR = Path("uploads")
@@ -57,6 +57,7 @@ app.include_router(vets.router, prefix="/api")
 app.include_router(notifications.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
+app.include_router(push.router, prefix="/api")
 
 
 @app.get("/")

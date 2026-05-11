@@ -73,7 +73,6 @@ async def upload_image_to_s3(file_bytes: bytes, filename: str) -> str:
             Key=unique_filename,
             Body=file_bytes,
             ContentType='image/jpeg',
-            ACL='public-read'  # 공개 읽기 권한
         )
         
         # Public URL 생성

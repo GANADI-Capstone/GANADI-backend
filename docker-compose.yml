@@ -56,6 +56,8 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-}
+        VITE_KAKAO_MAP_KEY: ${VITE_KAKAO_MAP_KEY:-}
+        VITE_AI_SERVER_URL: ${VITE_AI_SERVER_URL:-}
     networks:
       - ganadi-net
     restart: unless-stopped

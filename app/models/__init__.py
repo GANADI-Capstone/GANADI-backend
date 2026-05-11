@@ -184,6 +184,31 @@ class Notification(Base):
     user = relationship("User", back_populates="notifications")
 
 
+class PushSubscription(Base):
+    """Web Push 구독 정보 (보호자/수의사 공용).
+
+    - PushManager.subscribe() 가 만들어 준 endpoint/keys 를 그대로 저장.
+    - 한 사용자가 여러 브라우저/기기에서 구독할 수 있어 N 건 가능.
+    - 백엔드 알림 발송 시 user_id 또는 vet_id 로 lookup.
+    """
+
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # 둘 중 하나만 채워진다. (보호자 또는 수의사)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    vet_id = Column(Integer, ForeignKey("vets.id"), nullable=True, index=True)
+
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(String(255), nullable=False)
+    auth_secret = Column(String(255), nullable=False)
+    user_agent = Column(String(255), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class AdminReport(Base):
     """관리자가 처리하는 신고 (피그마 신고 관리 탭 대응)
 

@@ -37,6 +37,9 @@ env/
 .env.local
 .env.*.local
 
+# Web Push VAPID (로컬 자동 생성 — 배포 시 환경변수로 주입)
+vapid_keys.json
+
 # IDEs
 .vscode/
 .idea/

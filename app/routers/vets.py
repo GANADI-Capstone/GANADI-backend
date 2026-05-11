@@ -226,6 +226,104 @@ class HospitalMatchRequest(BaseModel):
     hospitals: List[HospitalLookup]
 
 
+class RegisteredVetCard(BaseModel):
+    """공용 수의사 목록/추천 카드 응답.
+
+    소견 요청 흐름의 직접 진입 동선을 위해 보호자/비회원 모두 조회 가능.
+    민감 정보(이메일·면허번호 등)는 노출하지 않는다.
+    """
+    id: int
+    name: str
+    hospital_name: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    specialty: Optional[str] = None
+    business_hours: Optional[str] = None
+    rating: Optional[float] = None
+    review_count: int = 0
+
+
+def _build_rating_map(db: Session) -> dict[int, tuple[Optional[float], int]]:
+    rows = (
+        db.query(
+            Opinion.vet_id,
+            func.avg(Opinion.owner_rating).label("avg_rating"),
+            func.count(Opinion.id).label("review_count"),
+        )
+        .filter(Opinion.owner_rating.isnot(None))
+        .group_by(Opinion.vet_id)
+        .all()
+    )
+    return {
+        row.vet_id: (
+            round(float(row.avg_rating), 1) if row.avg_rating is not None else None,
+            int(row.review_count or 0),
+        )
+        for row in rows
+    }
+
+
+def _vet_to_card(vet: Vet, rating_map: dict[int, tuple[Optional[float], int]]) -> RegisteredVetCard:
+    rating, count = rating_map.get(vet.id, (None, 0))
+    return RegisteredVetCard(
+        id=vet.id,
+        name=vet.name,
+        hospital_name=vet.hospital_name,
+        address=vet.address,
+        phone=vet.phone,
+        specialty=vet.specialty,
+        business_hours=vet.business_hours,
+        rating=rating,
+        review_count=count,
+    )
+
+
+@router.get("/registered", response_model=List[RegisteredVetCard])
+def list_registered_vets(
+    db: Session = Depends(get_db),
+    sort: str = "rating",  # rating | reviews | recent
+    limit: int = 50,
+    offset: int = 0,
+    specialty: Optional[str] = None,
+):
+    """승인된 GANADI 등록 수의사 공개 목록.
+
+    소견 요청 흐름의 진입 동선(AI 결과 직접 CTA, /vets 페이지의 등록 병원 토글)
+    에서 사용된다. 인증 불필요.
+    """
+    q = db.query(Vet).filter(Vet.approval_status == "approved")
+    if specialty:
+        q = q.filter(Vet.specialty.ilike(f"%{specialty}%"))
+
+    vets = q.all()
+    rating_map = _build_rating_map(db)
+
+    cards = [_vet_to_card(v, rating_map) for v in vets]
+    if sort == "rating":
+        cards.sort(key=lambda c: ((c.rating or 0), c.review_count), reverse=True)
+    elif sort == "reviews":
+        cards.sort(key=lambda c: (c.review_count, c.rating or 0), reverse=True)
+    else:  # recent — DB 순서 그대로 (created_at desc)
+        id_order = {v.id: i for i, v in enumerate(sorted(vets, key=lambda v: v.created_at, reverse=True))}
+        cards.sort(key=lambda c: id_order.get(c.id, 0))
+
+    return cards[offset : offset + limit]
+
+
+@router.get("/recommended", response_model=List[RegisteredVetCard])
+def recommended_vets(
+    db: Session = Depends(get_db),
+    limit: int = 3,
+    specialty: Optional[str] = None,
+):
+    """AI 분석 결과 페이지 등에서 보여줄 "추천 수의사" 짧은 목록.
+
+    실서비스에서는 보호자 위치/반려동물 종/관심 질환을 반영한 매칭으로
+    확장 가능. 지금은 평점·리뷰순 상위 N명을 반환한다.
+    """
+    return list_registered_vets(db=db, sort="rating", limit=limit, offset=0, specialty=specialty)
+
+
 def _normalize(text: Optional[str]) -> str:
     if not text:
         return ""

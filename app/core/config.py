@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_S3_BUCKET: str = ""
     AWS_REGION: str = "ap-northeast-2"
+
+    # Web Push (VAPID) — 비워두면 부팅 시 자동 생성해 ./vapid_keys.json 에 저장
+    VAPID_PUBLIC_KEY: str = ""
+    VAPID_PRIVATE_KEY: str = ""
+    VAPID_SUBJECT: str = "mailto:noreply@ganadi.dev"
     
     class Config:
         env_file = ".env"

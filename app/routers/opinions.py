@@ -32,6 +32,7 @@ from app.routers.dependencies import (
     get_current_user_or_vet,
     get_current_vet,
 )
+from app.routers.notifications import create_notification
 from app.schemas import (
     OpinionDetailResponse,
     OpinionOwnerRating,
@@ -201,13 +202,15 @@ def write_opinion(
 
     # 항목 12: 소견 "최초 작성 완료" 시점에만 보호자 알림 발송 (PUT 수정 시에는 보내지 않음).
     # 소견과 알림을 같은 트랜잭션에 묶어 한 번에 커밋 → 소견만 저장되고 알림이 누락되는 경우를 차단.
+    # create_notification 은 DB row + Web Push 둘 다 처리한다.
     owner_id = opinion.diagnosis.pet.owner_id
-    notification = Notification(
+    create_notification(
+        db,
         user_id=owner_id,
         message=f"{current_vet.name} 수의사가 소견을 작성했습니다.",
         type="opinion_answered",
+        url=f"/opinions/{opinion.id}",
     )
-    db.add(notification)
 
     db.commit()
     db.refresh(opinion)
