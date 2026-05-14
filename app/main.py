@@ -1,10 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.routers import auth, pets, diagnosis, opinions, vets, notifications, admin, users, reports, push
+from app.core.security_headers import SecurityHeadersMiddleware
+from app.database import get_db
+from app.routers import auth, pets, diagnosis, opinions, vets, notifications, admin, users, reports, push, payments
 
 # 업로드 디렉토리 생성
 UPLOAD_DIR = Path("uploads")
@@ -44,6 +48,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(SecurityHeadersMiddleware)
+
 # 정적 파일 서빙 (로컬 이미지)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
@@ -58,26 +64,47 @@ app.include_router(notifications.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(push.router, prefix="/api")
+app.include_router(payments.router, prefix="/api")
 
 
 @app.get("/")
 def read_root():
     """헬스 체크"""
-    return {
+    payload = {
         "status": "ok",
         "service": "PetCare Backend API",
-        "version": "1.0.0"
+        "version": "1.0.0",
     }
+    if settings.SERVICE_BUILD_LABEL:
+        payload["build"] = settings.SERVICE_BUILD_LABEL
+    return payload
 
 
 @app.get("/health")
-def health_check():
-    """상세 헬스 체크"""
-    return {
-        "status": "healthy",
-        "database": "connected",
-        "ai_server": settings.AI_SERVER_URL
+def health_check(db: Session = Depends(get_db)):
+    """상세 헬스 체크 — DB 연결 실제 확인."""
+    db_status = "disconnected"
+    try:
+        db.execute(text("SELECT 1"))
+        db_status = "connected"
+    except Exception:
+        db_status = "error"
+
+    overall = "healthy" if db_status == "connected" else "degraded"
+    out = {
+        "status": overall,
+        "database": db_status,
+        "ai_server_url_configured": bool(settings.AI_SERVER_URL),
     }
+    if settings.SERVICE_BUILD_LABEL:
+        out["build"] = settings.SERVICE_BUILD_LABEL
+    return out
+
+
+@app.get("/api/health")
+def api_health_check(db: Session = Depends(get_db)):
+    """`/health` 와 동일. 리버스 프록시가 `/api` 만 노출할 때 사용."""
+    return health_check(db)
 
 
 if __name__ == "__main__":

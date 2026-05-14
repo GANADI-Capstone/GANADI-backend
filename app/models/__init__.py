@@ -38,6 +38,7 @@ class User(Base):
     # Relationships
     pets = relationship("Pet", back_populates="owner", cascade="all, delete-orphan")
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
+    payment_orders = relationship("PaymentOrder", back_populates="user")
 
 
 class Vet(Base):
@@ -116,7 +117,8 @@ class DiagnosisResult(Base):
     is_normal = Column(Boolean, default=False)
     
     report_pdf_url = Column(String(500))
-    
+    report_data = Column(JSON, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     # Relationships
@@ -165,6 +167,33 @@ class Opinion(Base):
 
     diagnosis = relationship("DiagnosisResult", back_populates="opinions")
     vet = relationship("Vet", back_populates="opinions")
+
+
+class PaymentOrder(Base):
+    """토스페이먼츠 테스트 결제 주문 → 승인 후 Opinion 행 생성."""
+
+    __tablename__ = "payment_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    toss_order_id = Column(String(64), unique=True, nullable=False, index=True)
+    amount = Column(Integer, nullable=False)
+    currency = Column(String(10), default="KRW", nullable=False)
+    status = Column(String(32), default="pending", nullable=False)
+    payment_key = Column(String(200), nullable=True)
+
+    vet_id = Column(Integer, ForeignKey("vets.id"), nullable=False)
+    diagnosis_id = Column(Integer, ForeignKey("diagnosis_results.id"), nullable=False)
+    symptom_memo = Column(Text, nullable=True)
+
+    opinion_id = Column(Integer, ForeignKey("opinions.id"), nullable=True)
+    webhook_last_status = Column(String(32), nullable=True)
+    webhook_last_payload = Column(JSON, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="payment_orders")
 
 
 class Notification(Base):

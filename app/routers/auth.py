@@ -9,6 +9,8 @@ import httpx
 import secrets
 import logging
 
+from sqlalchemy import func
+
 from app.database import get_db
 from app.models import User, Vet
 from app.schemas import (
@@ -22,6 +24,16 @@ from app.core.storage import save_vet_document
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
+
+
+def _normalize_email(email: str) -> str:
+    """저장·조회 시 대소문자 혼선 방지 (로그인 실패 원인 중 흔함)."""
+    return (email or "").strip().lower()
+
+
+def _email_eq_normalized(column, norm_email: str):
+    """DB 에 저장된 이메일 앞뒤 공백·대소문자 허용."""
+    return func.lower(func.trim(column)) == norm_email
 
 
 # ==================== User Auth ====================
@@ -39,7 +51,7 @@ def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
     
     # 사용자 생성
     db_user = User(
-        email=user_data.email,
+        email=norm_email,
         password_hash=get_password_hash(user_data.password),
         name=user_data.name,
         phone=user_data.phone
@@ -60,7 +72,7 @@ def login_user(user_data: UserLogin, db: Session = Depends(get_db)):
     if not user or not verify_password(user_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="이메일 또는 비밀번호가 올바르지 않습니다."
+            detail="비밀번호가 일치하지 않습니다.",
         )
     
     if user.is_suspended:
@@ -98,7 +110,7 @@ def register_vet(vet_data: VetCreate, db: Session = Depends(get_db)):
         )
 
     db_vet = Vet(
-        email=vet_data.email,
+        email=norm_email,
         password_hash=get_password_hash(vet_data.password),
         name=vet_data.name,
         hospital_name=vet_data.hospital_name,
@@ -172,7 +184,7 @@ async def register_vet_with_docs(
             )
 
     db_vet = Vet(
-        email=email,
+        email=norm_email,
         password_hash=get_password_hash(password),
         name=name,
         hospital_name=hospital_name,
@@ -197,7 +209,7 @@ def login_vet(vet_data: VetLogin, db: Session = Depends(get_db)):
     if not vet or not verify_password(vet_data.password, vet.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="이메일 또는 비밀번호가 올바르지 않습니다."
+            detail="비밀번호가 일치하지 않습니다.",
         )
     
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -353,6 +365,8 @@ async def kakao_callback(
         # 이메일이 없는 경우 임시 이메일 생성
         if not email:
             email = f"kakao_{kakao_id}@ganadi.app"
+        else:
+            email = _normalize_email(email)
         
         # 이메일 중복 체크 (다른 일반 회원이 이미 사용 중인 경우)
         existing_user = db.query(User).filter(User.email == email).first()

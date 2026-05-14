@@ -34,7 +34,19 @@ class Settings(BaseSettings):
     VAPID_PUBLIC_KEY: str = ""
     VAPID_PRIVATE_KEY: str = ""
     VAPID_SUBJECT: str = "mailto:noreply@ganadi.dev"
-    
+
+    # 배포 메타 (헬스/버전 표시용, 선택)
+    SERVICE_BUILD_LABEL: str = ""
+
+    # 결제 (토스페이먼츠 테스트 키 — 비워두면 결제 API 비활성)
+    # https://developers.tosspayments.com 에서 테스트 클라이언트·시크릿 키 발급
+    FRONTEND_ORIGIN: str = "http://localhost:5173"
+    TOSS_PAYMENTS_CLIENT_KEY: str = ""
+    TOSS_PAYMENTS_SECRET_KEY: str = ""
+    # 웹훅 보안 키 (개발자센터 웹훅 설정). 비워두면 서명 검증 생략(캡스톤 로컬용).
+    TOSS_WEBHOOK_SECURITY_KEY: str = ""
+    OPINION_SERVICE_FEE_WON: int = 30000
+
     class Config:
         env_file = ".env"
         case_sensitive = True
@@ -43,6 +55,10 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> List[str]:
         """CORS origins를 리스트로 변환"""
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
+
+    @property
+    def toss_payments_configured(self) -> bool:
+        return bool(self.TOSS_PAYMENTS_SECRET_KEY and self.TOSS_PAYMENTS_CLIENT_KEY)
 
 
 settings = Settings()
