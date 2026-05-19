@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFi
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from datetime import timedelta
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from urllib.parse import urlparse
 import httpx
@@ -41,8 +41,10 @@ def _email_eq_normalized(column, norm_email: str):
 def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
     """일반 사용자 회원가입"""
     
+    norm_email = _normalize_email(user_data.email)
+
     # 이메일 중복 체크
-    existing_user = db.query(User).filter(User.email == user_data.email).first()
+    existing_user = db.query(User).filter(_email_eq_normalized(User.email, norm_email)).first()
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -51,7 +53,7 @@ def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
     
     # 사용자 생성
     db_user = User(
-        email=user_data.email,
+        email=norm_email,
         password_hash=get_password_hash(user_data.password),
         name=user_data.name,
         phone=user_data.phone
@@ -67,7 +69,7 @@ def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
 def login_user(user_data: UserLogin, db: Session = Depends(get_db)):
     """일반 사용자 로그인"""
     
-    user = db.query(User).filter(User.email == user_data.email).first()
+    user = db.query(User).filter(_email_eq_normalized(User.email, _normalize_email(user_data.email))).first()
     
     if not user or not verify_password(user_data.password, user.password_hash):
         raise HTTPException(
@@ -76,9 +78,16 @@ def login_user(user_data: UserLogin, db: Session = Depends(get_db)):
         )
     
     if user.is_suspended:
+        parts = [
+            "계정이 정지되어 로그인할 수 없습니다.",
+        ]
+        reason = getattr(user, "suspend_reason", None)
+        if reason:
+            parts.append(f"사유: {reason}")
+        parts.append("문의: support@peteyeai.com")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="정지된 계정입니다. 관리자에게 문의하세요."
+            detail=" ".join(parts),
         )
     
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -102,7 +111,9 @@ def register_vet(vet_data: VetCreate, db: Session = Depends(get_db)):
 
     파일 첨부 가입은 `/vet/register-with-docs` (multipart/form-data) 사용을 권장.
     """
-    existing_vet = db.query(Vet).filter(Vet.email == vet_data.email).first()
+    norm_email = _normalize_email(vet_data.email)
+
+    existing_vet = db.query(Vet).filter(_email_eq_normalized(Vet.email, norm_email)).first()
     if existing_vet:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -147,7 +158,9 @@ async def register_vet_with_docs(
     - 재직증명서는 선택
     - 가입 직후 approval_status="pending" 으로 저장되어 관리자 승인 대기 상태가 된다
     """
-    existing = db.query(Vet).filter(Vet.email == email).first()
+    norm_email = _normalize_email(str(email))
+
+    existing = db.query(Vet).filter(_email_eq_normalized(Vet.email, norm_email)).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -204,7 +217,9 @@ async def register_vet_with_docs(
 def login_vet(vet_data: VetLogin, db: Session = Depends(get_db)):
     """수의사 로그인"""
     
-    vet = db.query(Vet).filter(Vet.email == vet_data.email).first()
+    vet = db.query(Vet).filter(
+        _email_eq_normalized(Vet.email, _normalize_email(vet_data.email))
+    ).first()
     
     if not vet or not verify_password(vet_data.password, vet.password_hash):
         raise HTTPException(
@@ -239,18 +254,19 @@ def _resolve_redirect_uri(request: Request, explicit: Optional[str] = None) -> s
 
     우선순위:
       1) 호출 측이 명시한 explicit (POST body 의 redirect_uri)
-      2) Referer 헤더의 origin + /auth/kakao/callback
-      3) settings.KAKAO_REDIRECT_URI (.env fallback)
-    카카오 콘솔에는 사용 가능한 모든 redirect_uri 가 사전 등록되어 있어야 한다.
+      2) (KAKAO_REDIRECT_USE_REFERER=True 일 때) Referer 헤더의 origin + /auth/kakao/callback
+      3) settings.KAKAO_REDIRECT_URI (.env)
+    카카오 콘솔에는 실제로 사용하는 모든 redirect_uri 가 사전 등록되어 있어야 한다.
     """
     if explicit:
         return explicit
 
-    referer = request.headers.get("referer", "")
-    if referer:
-        parsed = urlparse(referer)
-        if parsed.scheme and parsed.netloc:
-            return f"{parsed.scheme}://{parsed.netloc}/auth/kakao/callback"
+    if settings.KAKAO_REDIRECT_USE_REFERER:
+        referer = request.headers.get("referer", "")
+        if referer:
+            parsed = urlparse(referer)
+            if parsed.scheme and parsed.netloc:
+                return f"{parsed.scheme}://{parsed.netloc}/auth/kakao/callback"
     return settings.KAKAO_REDIRECT_URI
 
 
@@ -389,6 +405,19 @@ async def kakao_callback(
             db.commit()
             db.refresh(user)
     
+    if user.is_suspended:
+        parts = [
+            "계정이 정지되어 로그인할 수 없습니다.",
+        ]
+        reason = getattr(user, "suspend_reason", None)
+        if reason:
+            parts.append(f"사유: {reason}")
+        parts.append("문의: support@peteyeai.com")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=" ".join(parts),
+        )
+
     # 5. JWT 토큰 생성 및 반환
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     jwt_token = create_access_token(
@@ -402,3 +431,169 @@ async def kakao_callback(
         "name": user.name,
         "role": user.role or "user"
     }
+
+
+# ==================== Password Reset ====================
+import hashlib
+from datetime import datetime, timedelta
+
+from app.models import PasswordResetToken
+from app.services import mail_templates as mail
+
+
+class PasswordForgotRequest(BaseModel):
+    email: EmailStr
+    account_type: str = Field(default="user", pattern="^(user|vet)$")
+
+
+class PasswordResetRequest(BaseModel):
+    token: str = Field(..., min_length=16, max_length=256)
+    account_type: str = Field(default="user", pattern="^(user|vet)$")
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _password_reset_generic_response() -> dict:
+    return {
+        "message": "등록된 이메일이면 비밀번호 재설정 링크를 발송했습니다. 메일함을 확인해 주세요.",
+    }
+
+
+@router.post("/password/forgot")
+def forgot_password(payload: PasswordForgotRequest, db: Session = Depends(get_db)):
+    """비밀번호 재설정 링크 이메일 발송 (계정 존재 여부는 응답에 노출하지 않음)."""
+    norm_email = _normalize_email(payload.email)
+    account_type = payload.account_type
+
+    account_id: Optional[int] = None
+    if account_type == "user":
+        user = db.query(User).filter(_email_eq_normalized(User.email, norm_email)).first()
+        if user:
+            account_id = user.id
+    else:
+        vet = db.query(Vet).filter(_email_eq_normalized(Vet.email, norm_email)).first()
+        if vet:
+            account_id = vet.id
+
+    if account_id is None:
+        return _password_reset_generic_response()
+
+    now = datetime.utcnow()
+    q = db.query(PasswordResetToken).filter(
+        PasswordResetToken.account_type == account_type,
+        PasswordResetToken.used_at.is_(None),
+        PasswordResetToken.expires_at > now,
+    )
+    if account_type == "user":
+        q = q.filter(PasswordResetToken.user_id == account_id)
+    else:
+        q = q.filter(PasswordResetToken.vet_id == account_id)
+    for old in q.all():
+        old.used_at = now
+
+    raw_token = secrets.token_urlsafe(32)
+    expires = now + timedelta(minutes=settings.PASSWORD_RESET_EXPIRE_MINUTES)
+    row = PasswordResetToken(
+        account_type=account_type,
+        user_id=account_id if account_type == "user" else None,
+        vet_id=account_id if account_type == "vet" else None,
+        token_hash=_hash_reset_token(raw_token),
+        expires_at=expires,
+    )
+    db.add(row)
+    db.commit()
+
+    reset_url = (
+        f"{settings.password_reset_url_base}"
+        f"?token={raw_token}&account={account_type}"
+    )
+    account_label = "수의사" if account_type == "vet" else "보호자"
+    sent = mail.send_password_reset_email(
+        to_email=norm_email,
+        reset_url=reset_url,
+        account_label=account_label,
+    )
+
+    resp = _password_reset_generic_response()
+    resp["email_sent"] = sent
+    if settings.is_mailpit_smtp:
+        resp["delivery_mode"] = "mailpit"
+        resp["mailpit_url"] = "http://localhost:8025"
+        if sent:
+            resp["message"] = (
+                "재설정 메일을 발송했습니다. "
+                "로컬 테스트 환경이므로 Mailpit(http://localhost:8025)에서 확인해 주세요."
+            )
+    elif sent:
+        resp["delivery_mode"] = "smtp"
+        resp["message"] = (
+            "등록된 이메일로 비밀번호 재설정 링크를 보냈습니다. "
+            "메일함(스팸함 포함)을 확인해 주세요."
+        )
+    if not sent:
+        logger.warning(
+            "[password-reset] SMTP 미설정 또는 발송 실패 — %s 대상 링크: %s",
+            norm_email,
+            reset_url,
+        )
+        if settings.should_expose_dev_reset_link:
+            resp["message"] = (
+                "이메일 서버(SMTP)가 설정되지 않아 메일을 보내지 못했습니다. "
+                "개발 모드: 아래 링크로 바로 재설정할 수 있습니다."
+            )
+            resp["dev_reset_url"] = reset_url
+        elif settings.SMTP_USER and not settings.SMTP_PASSWORD:
+            resp["message"] = (
+                "SMTP 비밀번호가 설정되지 않았습니다. "
+                "backend/.env 의 SMTP_PASSWORD(네이버 로그인 비밀번호)를 입력한 뒤 서버를 재시작해 주세요."
+            )
+        else:
+            resp["message"] = (
+                "메일 발송에 실패했습니다. "
+                "네이버 메일 POP3/SMTP 사용 설정과 SMTP_PASSWORD를 확인해 주세요."
+            )
+    return resp
+
+
+@router.post("/password/reset")
+def reset_password(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+    """토큰으로 새 비밀번호 설정."""
+    token_hash = _hash_reset_token(payload.token)
+    now = datetime.utcnow()
+    row = (
+        db.query(PasswordResetToken)
+        .filter(
+            PasswordResetToken.token_hash == token_hash,
+            PasswordResetToken.account_type == payload.account_type,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.expires_at > now,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="유효하지 않거나 만료된 재설정 링크입니다. 다시 요청해 주세요.",
+        )
+
+    new_hash = get_password_hash(payload.new_password)
+    if payload.account_type == "user" and row.user_id:
+        user = db.query(User).filter(User.id == row.user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+        user.password_hash = new_hash
+    elif payload.account_type == "vet" and row.vet_id:
+        vet = db.query(Vet).filter(Vet.id == row.vet_id).first()
+        if not vet:
+            raise HTTPException(status_code=404, detail="수의사를 찾을 수 없습니다.")
+        vet.password_hash = new_hash
+    else:
+        raise HTTPException(status_code=400, detail="잘못된 재설정 요청입니다.")
+
+    row.used_at = now
+    db.commit()
+    return {"message": "비밀번호가 변경되었습니다. 새 비밀번호로 로그인해 주세요."}
+

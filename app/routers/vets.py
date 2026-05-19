@@ -11,11 +11,12 @@
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.database import get_db
 from app.models import DiagnosisResult, Opinion, Vet
 from app.routers.dependencies import get_current_vet
@@ -220,6 +221,7 @@ class HospitalMatchResult(BaseModel):
     business_hours: Optional[str] = None
     rating: Optional[float] = None
     review_count: int = 0
+    opinion_fee_won: Optional[int] = None
 
 
 class HospitalMatchRequest(BaseModel):
@@ -241,6 +243,7 @@ class RegisteredVetCard(BaseModel):
     business_hours: Optional[str] = None
     rating: Optional[float] = None
     review_count: int = 0
+    opinion_fee_won: int = Field(..., description="원격 소견 결제 시 적용 금액(원). 수의사 미설정 시 서비스 기본값.")
 
 
 def _build_rating_map(db: Session) -> dict[int, tuple[Optional[float], int]]:
@@ -263,8 +266,15 @@ def _build_rating_map(db: Session) -> dict[int, tuple[Optional[float], int]]:
     }
 
 
+def _vet_opinion_fee_won(vet: Vet) -> int:
+    if getattr(vet, "opinion_fee_won", None) is not None:
+        return int(vet.opinion_fee_won)
+    return settings.OPINION_SERVICE_FEE_WON
+
+
 def _vet_to_card(vet: Vet, rating_map: dict[int, tuple[Optional[float], int]]) -> RegisteredVetCard:
     rating, count = rating_map.get(vet.id, (None, 0))
+    fee = _vet_opinion_fee_won(vet)
     return RegisteredVetCard(
         id=vet.id,
         name=vet.name,
@@ -275,6 +285,7 @@ def _vet_to_card(vet: Vet, rating_map: dict[int, tuple[Optional[float], int]]) -
         business_hours=vet.business_hours,
         rating=rating,
         review_count=count,
+        opinion_fee_won=int(fee),
     )
 
 
@@ -308,6 +319,19 @@ def list_registered_vets(
         cards.sort(key=lambda c: id_order.get(c.id, 0))
 
     return cards[offset : offset + limit]
+
+
+@router.get("/registered/{vet_id}", response_model=RegisteredVetCard)
+def get_registered_vet_card(vet_id: int, db: Session = Depends(get_db)):
+    """단일 등록 수의사 카드 (소견 요청 화면 등)."""
+    vet = db.query(Vet).filter(Vet.id == vet_id, Vet.approval_status == "approved").first()
+    if not vet:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="등록된 수의사를 찾을 수 없습니다.",
+        )
+    rating_map = _build_rating_map(db)
+    return _vet_to_card(vet, rating_map)
 
 
 @router.get("/recommended", response_model=List[RegisteredVetCard])
@@ -405,6 +429,7 @@ def match_hospitals(payload: HospitalMatchRequest, db: Session = Depends(get_db)
                     business_hours=matched.business_hours,
                     rating=avg,
                     review_count=count,
+                    opinion_fee_won=_vet_opinion_fee_won(matched),
                 )
             )
         else:
@@ -423,3 +448,142 @@ def match_hospitals(payload: HospitalMatchRequest, db: Session = Depends(get_db)
             )
 
     return results
+
+
+# ==================== 관리자 안내 (신고 스레드) ====================
+from datetime import datetime as dt
+
+from app.models import AdminReport
+from app.services.report_messaging import (
+    AUDIENCE_SUBJECT,
+    add_report_message,
+    filter_messages_for_subject,
+)
+
+
+class VetReportSummary(BaseModel):
+    id: int
+    target_label: str
+    reason: str
+    status: str
+    created_at: dt
+    message_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class VetReportMessageResponse(BaseModel):
+    id: int
+    sender_role: str
+    audience: str
+    body: str
+    email_sent: bool
+    created_at: dt
+
+    class Config:
+        from_attributes = True
+
+
+class VetReportReplyCreate(BaseModel):
+    body: str = Field(..., min_length=1, max_length=5000)
+
+
+def _get_vet_subject_report(db: Session, report_id: int, vet_id: int) -> AdminReport:
+    report = (
+        db.query(AdminReport)
+        .filter(
+            AdminReport.id == report_id,
+            AdminReport.target_vet_id == vet_id,
+            AdminReport.target_type == "vet",
+        )
+        .first()
+    )
+    if not report:
+        raise HTTPException(status_code=404, detail="안내를 찾을 수 없습니다.")
+    return report
+
+
+@router.get("/me/report-messages", response_model=List[VetReportSummary])
+def list_vet_admin_messages(
+    db: Session = Depends(get_db),
+    current_vet: Vet = Depends(get_current_vet),
+):
+    reports = (
+        db.query(AdminReport)
+        .filter(AdminReport.target_vet_id == current_vet.id, AdminReport.target_type == "vet")
+        .order_by(AdminReport.created_at.desc())
+        .all()
+    )
+    out: List[VetReportSummary] = []
+    for r in reports:
+        visible = filter_messages_for_subject(r.messages or [])
+        out.append(
+            VetReportSummary(
+                id=r.id,
+                target_label=r.target_label,
+                reason=r.reason,
+                status=r.status,
+                created_at=r.created_at,
+                message_count=len(visible),
+            )
+        )
+    return out
+
+
+@router.get("/me/report-messages/{report_id}", response_model=VetReportSummary)
+def get_vet_admin_message_detail(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_vet: Vet = Depends(get_current_vet),
+):
+    report = _get_vet_subject_report(db, report_id, current_vet.id)
+    visible = filter_messages_for_subject(report.messages or [])
+    return VetReportSummary(
+        id=report.id,
+        target_label=report.target_label,
+        reason=report.reason,
+        status=report.status,
+        created_at=report.created_at,
+        message_count=len(visible),
+    )
+
+
+@router.get("/me/report-messages/{report_id}/thread", response_model=List[VetReportMessageResponse])
+def get_vet_report_thread(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_vet: Vet = Depends(get_current_vet),
+):
+    report = _get_vet_subject_report(db, report_id, current_vet.id)
+    return filter_messages_for_subject(report.messages or [])
+
+
+@router.post(
+    "/me/report-messages/{report_id}/reply",
+    response_model=VetReportMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def reply_vet_report_thread(
+    report_id: int,
+    payload: VetReportReplyCreate,
+    db: Session = Depends(get_db),
+    current_vet: Vet = Depends(get_current_vet),
+):
+    report = _get_vet_subject_report(db, report_id, current_vet.id)
+    if report.status == "dismissed":
+        raise HTTPException(status_code=400, detail="종료된 안내에는 답글을 남길 수 없습니다.")
+
+    msg, _ = add_report_message(
+        db,
+        report=report,
+        sender_role="vet",
+        audience=AUDIENCE_SUBJECT,
+        body=payload.body,
+        sender_vet_id=current_vet.id,
+        send_email_flag=False,
+    )
+    db.commit()
+    db.refresh(msg)
+    return msg
+

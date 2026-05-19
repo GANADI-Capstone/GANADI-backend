@@ -1,9 +1,21 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
+from pathlib import Path
+
+# uvicorn 을 프로젝트 루트에서 띄워도 backend/.env 를 읽도록 고정
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+_ENV_FILE = _BACKEND_DIR / ".env"
 
 
 class Settings(BaseSettings):
     """애플리케이션 설정"""
+    
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE) if _ENV_FILE.is_file() else None,
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
     
     # Database
     DATABASE_URL: str = "mysql+pymysql://root:password@localhost:3306/petcare_db"
@@ -23,6 +35,9 @@ class Settings(BaseSettings):
     KAKAO_CLIENT_ID: str = "783bb48a7f853f7cabe3821fdf103eab"
     KAKAO_CLIENT_SECRET: str = "bxuGbL01bXVrR0SqH8Bf3gz72jlO5rkv"
     KAKAO_REDIRECT_URI: str = "http://localhost:5173/auth/kakao/callback"
+    # True: Referer(프론트 origin)로 redirect_uri 자동 결정 — LAN IP·포트마다 카카오 콘솔에 URI 추가 필요
+    # False: 항상 KAKAO_REDIRECT_URI만 사용 — 로컬은 콘솔에 해당 URI 하나만 등록하면 됨
+    KAKAO_REDIRECT_USE_REFERER: bool = True
     
     # S3 (선택사항)
     AWS_ACCESS_KEY_ID: str = ""
@@ -47,10 +62,53 @@ class Settings(BaseSettings):
     TOSS_WEBHOOK_SECURITY_KEY: str = ""
     OPINION_SERVICE_FEE_WON: int = 30000
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-    
+    # 이메일 (SMTP) — 비밀번호 재설정·신고/관리자 안내
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_USE_TLS: bool = True
+    # 네이버(465) 등 SSL 직접 연결 — true 이면 SMTP_USE_TLS 무시
+    SMTP_USE_SSL: bool = False
+    EMAIL_FROM: str = "noreply@peteyeai.com"
+    EMAIL_FROM_NAME: str = "PET EYE AI"
+    # 비밀번호 재설정 링크 베이스 (토큰은 쿼리로 붙임)
+    PASSWORD_RESET_URL_BASE: str = ""
+    PASSWORD_RESET_EXPIRE_MINUTES: int = 60
+    # 신고 접수 시 관리자 알림 (선택)
+    ADMIN_NOTIFY_EMAIL: str = ""
+    # SMTP 미설정 시 재설정 링크를 API/화면에 노출 (로컬 개발용, 배포 시 false)
+    EMAIL_DEV_EXPOSE_LINK: bool = True
+
+    @property
+    def password_reset_url_base(self) -> str:
+        base = (self.PASSWORD_RESET_URL_BASE or self.FRONTEND_ORIGIN or "").rstrip("/")
+        return f"{base}/reset-password"
+
+    @property
+    def is_mailpit_smtp(self) -> bool:
+        host = (self.SMTP_HOST or "").strip().lower()
+        return host in ("localhost", "127.0.0.1", "mailpit", "host.docker.internal")
+
+    @property
+    def smtp_configured(self) -> bool:
+        if not self.SMTP_HOST or not self.EMAIL_FROM:
+            return False
+        if self.is_mailpit_smtp:
+            return True
+        return bool(self.SMTP_USER and self.SMTP_PASSWORD)
+
+    @property
+    def smtp_envelope_from(self) -> str:
+        """네이버 등은 로그인 계정과 From 이 일치해야 함."""
+        if self.SMTP_USER and not self.is_mailpit_smtp:
+            return self.SMTP_USER.strip()
+        return self.EMAIL_FROM.strip()
+
+    @property
+    def should_expose_dev_reset_link(self) -> bool:
+        return self.EMAIL_DEV_EXPOSE_LINK and not self.smtp_configured
+
     @property
     def cors_origins_list(self) -> List[str]:
         """CORS origins를 리스트로 변환"""

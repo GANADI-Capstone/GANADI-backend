@@ -1,8 +1,10 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -26,6 +28,29 @@ app = FastAPI(
     description="반려동물 안구 질환 진단 서비스 API",
     version="1.0.0"
 )
+
+
+@app.exception_handler(OperationalError)
+async def db_operational_error_handler(request: Request, exc: OperationalError):
+    """연결·인증 실패만 안내. MySQL 1054(Unknown column) 등 스키마 불일치는 그대로 노출."""
+    orig = getattr(exc, "orig", None)
+    code = orig.args[0] if orig and getattr(orig, "args", None) else None
+    if code in (1045, 2002, 2003, 2013):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "데이터베이스에 연결할 수 없습니다. backend/.env 의 DATABASE_URL 과 MySQL 실행 여부·계정 비밀번호를 확인해 주세요."
+            },
+        )
+    if code == 1054:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "DB 스키마가 코드와 맞지 않습니다. backend 에서 alembic upgrade head 를 실행해 주세요."
+            },
+        )
+    raise exc
+
 
 # CORS 설정
 # - 명시 origin 은 .env 의 CORS_ORIGINS (배포 환경 등)
@@ -95,6 +120,8 @@ def health_check(db: Session = Depends(get_db)):
         "status": overall,
         "database": db_status,
         "ai_server_url_configured": bool(settings.AI_SERVER_URL),
+        "smtp_configured": settings.smtp_configured,
+        "smtp_mode": "mailpit" if settings.is_mailpit_smtp else ("smtp" if settings.smtp_configured else "off"),
     }
     if settings.SERVICE_BUILD_LABEL:
         out["build"] = settings.SERVICE_BUILD_LABEL

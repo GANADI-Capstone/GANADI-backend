@@ -71,6 +71,7 @@ class VetResponse(BaseModel):
     rejection_reason: Optional[str] = None
     reviewed_at: Optional[datetime] = None
     created_at: datetime
+    opinion_fee_won: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -83,6 +84,12 @@ class VetProfileUpdate(BaseModel):
     phone: Optional[str] = Field(None, max_length=20)
     specialty: Optional[str] = Field(None, max_length=255)
     business_hours: Optional[str] = Field(None, max_length=255)
+    opinion_fee_won: Optional[int] = Field(
+        None,
+        ge=0,
+        le=50_000_000,
+        description="원격 소견 상담료(원). null 이면 서비스 기본 금액 사용.",
+    )
 
 
 class VetRejectRequest(BaseModel):

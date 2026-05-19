@@ -87,7 +87,11 @@ def toss_prepare(
     if not vet:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="수의사를 찾을 수 없습니다.")
 
-    amount = settings.OPINION_SERVICE_FEE_WON
+    amount = (
+        vet.opinion_fee_won
+        if getattr(vet, "opinion_fee_won", None) is not None
+        else settings.OPINION_SERVICE_FEE_WON
+    )
     toss_order_id = f"op{secrets.token_hex(10)}"
 
     row = PaymentOrder(

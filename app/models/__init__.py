@@ -31,6 +31,7 @@ class User(Base):
     
     role = Column(String(20), default="user", nullable=False)
     is_suspended = Column(Boolean, default=False, nullable=False)
+    suspend_reason = Column(Text, nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -69,6 +70,8 @@ class Vet(Base):
 
     approval_status = Column(String(20), default="pending", nullable=False)
     rejection_reason = Column(Text, nullable=True)                # 반려 시 사유
+    # 원격 소견 결제 금액(원). 비우면 서버 기본값(OPINION_SERVICE_FEE_WON) 사용
+    opinion_fee_won = Column(Integer, nullable=True)
     reviewed_at = Column(DateTime, nullable=True)                 # 관리자 검토 일시
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -252,9 +255,52 @@ class AdminReport(Base):
     reporter_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     reporter_email = Column(String(255), nullable=True)
     target_type = Column(String(32), nullable=False)  # vet, user, review, other
+    target_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    target_vet_id = Column(Integer, ForeignKey("vets.id"), nullable=True, index=True)
     target_label = Column(String(255), nullable=False)
     reason = Column(Text, nullable=False)
     status = Column(String(20), default="pending", nullable=False)  # pending, processing, resolved, dismissed
     admin_note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    messages = relationship(
+        "ReportMessage",
+        back_populates="report",
+        cascade="all, delete-orphan",
+        order_by="ReportMessage.created_at",
+    )
+
+
+class ReportMessage(Base):
+    """신고 건별 관리자↔신고자/피신고자 소통 스레드"""
+
+    __tablename__ = "report_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_id = Column(Integer, ForeignKey("admin_reports.id"), nullable=False, index=True)
+    sender_role = Column(String(16), nullable=False)  # admin, user, vet, system
+    sender_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    sender_vet_id = Column(Integer, ForeignKey("vets.id"), nullable=True)
+    # reporter: 신고자에게 공개 | subject: 피신고 대상 | internal: 관리자 전용
+    audience = Column(String(16), nullable=False)
+    body = Column(Text, nullable=False)
+    email_sent = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    report = relationship("AdminReport", back_populates="messages")
+
+
+class PasswordResetToken(Base):
+    """비밀번호 재설정 1회용 토큰 (원문은 DB에 저장하지 않음)"""
+
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    account_type = Column(String(8), nullable=False)  # user | vet
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    vet_id = Column(Integer, ForeignKey("vets.id"), nullable=True, index=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

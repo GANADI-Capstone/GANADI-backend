@@ -107,6 +107,8 @@ class AdminReportResponse(BaseModel):
     reporter_user_id: Optional[int] = None
     reporter_email: Optional[str] = None
     target_type: str
+    target_user_id: Optional[int] = None
+    target_vet_id: Optional[int] = None
     target_label: str
     reason: str
     status: str
@@ -117,9 +119,32 @@ class AdminReportResponse(BaseModel):
         from_attributes = True
 
 
+class ReportMessageResponse(BaseModel):
+    id: int
+    sender_role: str
+    audience: str
+    body: str
+    email_sent: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AdminReportMessageCreate(BaseModel):
+    audience: str = Field(..., pattern="^(reporter|subject|internal)$")
+    body: str = Field(..., min_length=1, max_length=5000)
+    send_email: bool = True
+
+
 class AdminReportPatch(BaseModel):
     status: str = Field(..., pattern="^(pending|processing|resolved|dismissed)$")
     admin_note: Optional[str] = Field(None, max_length=5000)
+
+
+class UserSuspendPayload(BaseModel):
+    """보호자 계정 정지 시 관리자 메모(사유). 로그인 거부 메시지에 포함된다."""
+    reason: str = Field(..., min_length=1, max_length=2000)
 
 
 # ==================== 통계 API (고정 경로 - 먼저 선언) ====================
@@ -366,6 +391,58 @@ def patch_admin_report(
     return r
 
 
+@router.get("/reports/{report_id}/messages", response_model=List[ReportMessageResponse])
+def list_report_messages(
+    report_id: int,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    r = db.query(AdminReport).filter(AdminReport.id == report_id).first()
+    if not r:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="신고를 찾을 수 없습니다.")
+    return r.messages or []
+
+
+@router.post(
+    "/reports/{report_id}/messages",
+    response_model=ReportMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def send_report_message(
+    report_id: int,
+    payload: AdminReportMessageCreate,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    from app.services.report_messaging import add_report_message
+
+    r = db.query(AdminReport).filter(AdminReport.id == report_id).first()
+    if not r:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="신고를 찾을 수 없습니다.")
+
+    if payload.audience == "subject" and not (r.target_user_id or r.target_vet_id):
+        raise HTTPException(
+            status_code=400,
+            detail="피신고 대상 ID가 없어 대상에게 메시지를 보낼 수 없습니다. 신고 접수 시 대상 ID를 확인해 주세요.",
+        )
+
+    if r.status == "pending":
+        r.status = "processing"
+
+    msg, _ = add_report_message(
+        db,
+        report=r,
+        sender_role="admin",
+        audience=payload.audience,
+        body=payload.body,
+        sender_user_id=admin.id,
+        send_email_flag=payload.send_email,
+    )
+    db.commit()
+    db.refresh(msg)
+    return msg
+
+
 # ==================== 보호자 관리 API ====================
 @router.get("/users", response_model=List[UserListResponse])
 def get_all_users(
@@ -412,6 +489,7 @@ def get_all_users(
 @router.patch("/users/{user_id}/suspend", response_model=UserListResponse)
 def suspend_user(
     user_id: int,
+    payload: UserSuspendPayload,
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
@@ -439,6 +517,8 @@ def suspend_user(
         )
     
     user.is_suspended = True
+    if hasattr(user, "suspend_reason"):
+        user.suspend_reason = payload.reason.strip()
     db.commit()
     db.refresh(user)
 
