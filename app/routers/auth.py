@@ -20,6 +20,7 @@ from app.schemas import (
 )
 from app.core.security import get_password_hash, verify_password, create_access_token
 from app.core.config import settings
+from app.core.rate_limit import enforce_rate_limit
 from app.core.storage import save_vet_document
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -66,8 +67,9 @@ def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/user/login", response_model=Token)
-def login_user(user_data: UserLogin, db: Session = Depends(get_db)):
+def login_user(user_data: UserLogin, request: Request, db: Session = Depends(get_db)):
     """일반 사용자 로그인"""
+    enforce_rate_limit(request, key_prefix="login:user", max_calls=20, window_sec=60)
     
     user = db.query(User).filter(_email_eq_normalized(User.email, _normalize_email(user_data.email))).first()
     
@@ -214,8 +216,9 @@ async def register_vet_with_docs(
 
 
 @router.post("/vet/login", response_model=Token)
-def login_vet(vet_data: VetLogin, db: Session = Depends(get_db)):
+def login_vet(vet_data: VetLogin, request: Request, db: Session = Depends(get_db)):
     """수의사 로그인"""
+    enforce_rate_limit(request, key_prefix="login:vet", max_calls=20, window_sec=60)
     
     vet = db.query(Vet).filter(
         _email_eq_normalized(Vet.email, _normalize_email(vet_data.email))
@@ -463,8 +466,9 @@ def _password_reset_generic_response() -> dict:
 
 
 @router.post("/password/forgot")
-def forgot_password(payload: PasswordForgotRequest, db: Session = Depends(get_db)):
+def forgot_password(payload: PasswordForgotRequest, request: Request, db: Session = Depends(get_db)):
     """비밀번호 재설정 링크 이메일 발송 (계정 존재 여부는 응답에 노출하지 않음)."""
+    enforce_rate_limit(request, key_prefix="password:forgot", max_calls=5, window_sec=300)
     norm_email = _normalize_email(payload.email)
     account_type = payload.account_type
 
@@ -559,8 +563,9 @@ def forgot_password(payload: PasswordForgotRequest, db: Session = Depends(get_db
 
 
 @router.post("/password/reset")
-def reset_password(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+def reset_password(payload: PasswordResetRequest, request: Request, db: Session = Depends(get_db)):
     """토큰으로 새 비밀번호 설정."""
+    enforce_rate_limit(request, key_prefix="password:reset", max_calls=10, window_sec=300)
     token_hash = _hash_reset_token(payload.token)
     now = datetime.utcnow()
     row = (

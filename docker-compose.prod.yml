@@ -1,5 +1,6 @@
 # 프로덕션 오버라이드 — 로컬 MySQL 제거, RDS 사용
-# 사용법: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# 사용법: ./scripts/deploy-prod.sh  또는
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 services:
 
@@ -10,16 +11,25 @@ services:
 
   backend:
     environment:
+      ENVIRONMENT: production
       DATABASE_URL: mysql+pymysql://ganadi_user:${DB_PASSWORD}@${RDS_ENDPOINT}:3306/ganadi_local
+      AI_SERVER_URL: http://ai:8000
+      CORS_ORIGINS: https://ganadi.site
+      FRONTEND_ORIGIN: https://ganadi.site
+      PASSWORD_RESET_URL_BASE: https://ganadi.site/reset-password
+      KAKAO_REDIRECT_URI: https://ganadi.site/auth/kakao/callback
+      KAKAO_REDIRECT_USE_REFERER: "false"
+      EMAIL_DEV_EXPOSE_LINK: "false"
     depends_on:
-      mysql:
+      ai:
         condition: service_healthy
-        required: false
 
   frontend:
     build:
+      context: ../frontend
+      dockerfile: Dockerfile
       args:
-        VITE_API_URL: https://ganadi.site
+        VITE_API_URL: ${VITE_API_URL:-}
         VITE_KAKAO_MAP_KEY: ${VITE_KAKAO_MAP_KEY}
         VITE_AI_SERVER_URL: https://ganadi.site/ai
 

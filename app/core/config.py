@@ -17,11 +17,14 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     
+    # development | staging | production
+    ENVIRONMENT: str = "development"
+
     # Database
     DATABASE_URL: str = "mysql+pymysql://root:password@localhost:3306/petcare_db"
     
     # JWT
-    SECRET_KEY: str = "your-secret-key-change-this-in-production"
+    SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
@@ -31,9 +34,9 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
     
-    # Kakao OAuth
-    KAKAO_CLIENT_ID: str = "783bb48a7f853f7cabe3821fdf103eab"
-    KAKAO_CLIENT_SECRET: str = "bxuGbL01bXVrR0SqH8Bf3gz72jlO5rkv"
+    # Kakao OAuth — backend/.env 에 반드시 설정
+    KAKAO_CLIENT_ID: str = ""
+    KAKAO_CLIENT_SECRET: str = ""
     KAKAO_REDIRECT_URI: str = "http://localhost:5173/auth/kakao/callback"
     # True: Referer(프론트 origin)로 redirect_uri 자동 결정 — LAN IP·포트마다 카카오 콘솔에 URI 추가 필요
     # False: 항상 KAKAO_REDIRECT_URI만 사용 — 로컬은 콘솔에 해당 URI 하나만 등록하면 됨
@@ -117,6 +120,19 @@ class Settings(BaseSettings):
     @property
     def toss_payments_configured(self) -> bool:
         return bool(self.TOSS_PAYMENTS_SECRET_KEY and self.TOSS_PAYMENTS_CLIENT_KEY)
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.strip().lower() == "production"
+
+    @property
+    def is_development(self) -> bool:
+        return self.ENVIRONMENT.strip().lower() == "development"
+
+    @property
+    def allow_lan_cors(self) -> bool:
+        """LAN CORS regex — 로컬·스테이징 PWA 검증용. 프로덕션에서는 비활성."""
+        return not self.is_production
 
 
 settings = Settings()

@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.startup_checks import validate_production_settings
 from app.database import get_db
 from app.routers import auth, pets, diagnosis, opinions, vets, notifications, admin, users, reports, push, payments
 
@@ -22,11 +25,25 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 # 팀원 간 스키마 불일치의 원인이 되므로 제거했다.
 # 신규 테이블/컬럼은 반드시 `alembic revision --autogenerate` + `alembic upgrade head` 로 반영한다.
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.is_production:
+        validate_production_settings(strict=True)
+    elif settings.ENVIRONMENT.strip().lower() == "staging":
+        validate_production_settings(strict=False)
+    yield
+
+
 # FastAPI 앱 생성
 app = FastAPI(
     title="PetCare API",
     description="반려동물 안구 질환 진단 서비스 API",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 
 
@@ -64,14 +81,16 @@ LAN_REGEX = (
     r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
     r")(:\d+)?$"
 )
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_origin_regex=LAN_REGEX,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+cors_kwargs = {
+    "allow_origins": settings.cors_origins_list,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if settings.allow_lan_cors:
+    cors_kwargs["allow_origin_regex"] = LAN_REGEX
+
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -118,10 +137,13 @@ def health_check(db: Session = Depends(get_db)):
     overall = "healthy" if db_status == "connected" else "degraded"
     out = {
         "status": overall,
+        "environment": settings.ENVIRONMENT,
         "database": db_status,
         "ai_server_url_configured": bool(settings.AI_SERVER_URL),
         "smtp_configured": settings.smtp_configured,
         "smtp_mode": "mailpit" if settings.is_mailpit_smtp else ("smtp" if settings.smtp_configured else "off"),
+        "toss_payments_configured": settings.toss_payments_configured,
+        "vapid_configured": bool(settings.VAPID_PUBLIC_KEY and settings.VAPID_PRIVATE_KEY),
     }
     if settings.SERVICE_BUILD_LABEL:
         out["build"] = settings.SERVICE_BUILD_LABEL

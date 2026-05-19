@@ -35,6 +35,12 @@ services:
     networks:
       - ganadi-net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/api/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
 
   # ── AI 서버 ───────────────────────────────────────────────────────────────
   ai:
@@ -48,11 +54,17 @@ services:
     networks:
       - ganadi-net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # ── 프론트엔드 ────────────────────────────────────────────────────────────
   frontend:
     build:
-      context: ../GANADI-frontend
+      context: ../frontend
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-}
@@ -70,9 +82,12 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - backend
-      - frontend
-      - ai
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+      ai:
+        condition: service_healthy
     networks:
       - ganadi-net
     restart: unless-stopped
