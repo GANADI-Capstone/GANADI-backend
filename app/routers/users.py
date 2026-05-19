@@ -31,6 +31,10 @@ class PasswordChange(BaseModel):
     new_password: str = Field(..., min_length=8)
 
 
+class AccountDeleteRequest(BaseModel):
+    password: Optional[str] = None
+
+
 @router.get("/me", response_model=UserMeResponse)
 def get_me(current_user: User = Depends(get_current_user)):
     return UserMeResponse(
@@ -121,3 +125,32 @@ async def upload_profile_image(
     db.refresh(current_user)
     
     return {"profile_image_url": image_url}
+
+
+@router.delete("/me", status_code=status.HTTP_200_OK)
+def delete_account(
+    payload: AccountDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """현재 로그인한 사용자 계정 삭제 (회원 탈퇴)"""
+    
+    # 카카오 로그인 사용자가 아닌 경우 비밀번호 확인
+    if not current_user.kakao_id:
+        if not payload.password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="비밀번호를 입력해주세요."
+            )
+        
+        if not verify_password(payload.password, current_user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="비밀번호가 올바르지 않습니다."
+            )
+    
+    # 계정 삭제 (cascade로 연관된 데이터도 자동 삭제됨)
+    db.delete(current_user)
+    db.commit()
+    
+    return {"message": "회원 탈퇴가 완료되었습니다."}

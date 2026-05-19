@@ -175,3 +175,30 @@ async def upload_pet_profile_image(
     db.refresh(pet)
     
     return {"profile_image_url": image_url}
+
+
+@router.delete("/{pet_id}/profile-image", status_code=status.HTTP_200_OK)
+def delete_pet_profile_image(
+    pet_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """반려동물 프로필 사진 삭제"""
+    
+    # 반려동물 조회 및 소유자 확인
+    pet = db.query(Pet).filter(
+        Pet.id == pet_id,
+        Pet.owner_id == current_user.id
+    ).first()
+    
+    if not pet:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="반려동물을 찾을 수 없습니다."
+        )
+    
+    # 프로필 사진 삭제
+    pet.profile_image_url = None
+    db.commit()
+    
+    return {"message": "프로필 사진이 삭제되었습니다."}

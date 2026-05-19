@@ -98,6 +98,8 @@ class PetCreate(BaseModel):
     age: Optional[int] = Field(None, ge=0, le=30)
     gender: Optional[GenderEnum] = None
     profile_image_url: Optional[str] = None
+    is_neutered: Optional[bool] = None
+    notes: Optional[str] = None
 
 
 class PetUpdate(BaseModel):
@@ -107,6 +109,8 @@ class PetUpdate(BaseModel):
     age: Optional[int] = Field(None, ge=0, le=30)
     gender: Optional[GenderEnum] = None
     profile_image_url: Optional[str] = None
+    is_neutered: Optional[bool] = None
+    notes: Optional[str] = None
 
 
 class PetResponse(BaseModel):
@@ -118,6 +122,8 @@ class PetResponse(BaseModel):
     age: Optional[int] = None
     gender: Optional[GenderEnum] = None
     profile_image_url: Optional[str] = None
+    is_neutered: Optional[bool] = None
+    notes: Optional[str] = None
     created_at: datetime
     
     class Config:

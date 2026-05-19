@@ -51,7 +51,7 @@ def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
     
     # 사용자 생성
     db_user = User(
-        email=norm_email,
+        email=user_data.email,
         password_hash=get_password_hash(user_data.password),
         name=user_data.name,
         phone=user_data.phone

@@ -91,6 +91,8 @@ class Pet(Base):
     age = Column(Integer)
     gender = Column(Enum(GenderEnum))  # male, female
     profile_image_url = Column(String(500))
+    is_neutered = Column(Boolean, default=False)
+    notes = Column(Text, nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
