@@ -15,7 +15,7 @@ services:
       AI_SERVER_URL: http://ai:8000
       CORS_ORIGINS: https://ganadi.site
       FRONTEND_ORIGIN: https://ganadi.site
-      PASSWORD_RESET_URL_BASE: https://ganadi.site/reset-password
+      PASSWORD_RESET_URL_BASE: https://ganadi.site
       KAKAO_REDIRECT_URI: https://ganadi.site/auth/kakao/callback
       KAKAO_REDIRECT_USE_REFERER: "false"
       EMAIL_DEV_EXPOSE_LINK: "false"

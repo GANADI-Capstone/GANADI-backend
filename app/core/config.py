@@ -75,7 +75,8 @@ class Settings(BaseSettings):
     SMTP_USE_SSL: bool = False
     EMAIL_FROM: str = "noreply@peteyeai.com"
     EMAIL_FROM_NAME: str = "PET EYE AI"
-    # 비밀번호 재설정 링크 베이스 (토큰은 쿼리로 붙임)
+    # 비밀번호 재설정 링크 베이스 — 프론트 origin (예: https://ganadi.site).
+    # /reset-password 경로는 password_reset_url_base 프로퍼티가 붙임.
     PASSWORD_RESET_URL_BASE: str = ""
     PASSWORD_RESET_EXPIRE_MINUTES: int = 60
     # 신고 접수 시 관리자 알림 (선택)
@@ -86,6 +87,11 @@ class Settings(BaseSettings):
     @property
     def password_reset_url_base(self) -> str:
         base = (self.PASSWORD_RESET_URL_BASE or self.FRONTEND_ORIGIN or "").rstrip("/")
+        if not base:
+            return "/reset-password"
+        # .env 에 .../reset-password 를 넣은 경우 이중 경로 방지
+        if base.endswith("/reset-password"):
+            return base
         return f"{base}/reset-password"
 
     @property

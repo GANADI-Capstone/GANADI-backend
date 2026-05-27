@@ -60,7 +60,7 @@
 - [ ] `DATABASE_URL` — RDS 엔드포인트·계정
 - [ ] `CORS_ORIGINS=https://ganadi.site`
 - [ ] `FRONTEND_ORIGIN=https://ganadi.site`
-- [ ] `PASSWORD_RESET_URL_BASE=https://ganadi.site/reset-password`
+- [ ] `PASSWORD_RESET_URL_BASE=https://ganadi.site` (경로 `/reset-password`는 코드에서 자동 추가)
 - [ ] `EMAIL_DEV_EXPOSE_LINK=false`
 - [ ] Kakao: `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET`, `KAKAO_REDIRECT_URI=https://ganadi.site/auth/kakao/callback`
 - [ ] `KAKAO_REDIRECT_USE_REFERER=false` (프로덕션 권장)
