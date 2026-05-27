@@ -540,6 +540,43 @@ def suspend_user(
     )
 
 
+@router.patch("/users/{user_id}/unsuspend", status_code=status.HTTP_200_OK)
+def unsuspend_user(
+    user_id: int,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    보호자 계정 정지 해제
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="사용자를 찾을 수 없습니다."
+        )
+    
+    if hasattr(user, 'role') and user.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="관리자 계정은 정지 해제할 수 없습니다."
+        )
+    
+    if not hasattr(user, 'is_suspended'):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="User 모델에 is_suspended 필드가 없습니다. 마이그레이션을 실행해주세요."
+        )
+    
+    user.is_suspended = False
+    if hasattr(user, "suspend_reason"):
+        user.suspend_reason = None
+    db.commit()
+    
+    return {"message": "정지가 해제되었습니다."}
+
+
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(
     user_id: int,

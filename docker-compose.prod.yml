@@ -4,7 +4,6 @@
 
 services:
 
-  # 로컬 MySQL 컨테이너 비활성화 (RDS 사용)
   mysql:
     profiles:
       - local-only
@@ -21,12 +20,15 @@ services:
       KAKAO_REDIRECT_USE_REFERER: "false"
       EMAIL_DEV_EXPOSE_LINK: "false"
     depends_on:
+      mysql:
+        condition: service_healthy
+        required: false
       ai:
         condition: service_healthy
 
   frontend:
     build:
-      context: ../frontend
+      context: ../GANADI-frontend
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-}

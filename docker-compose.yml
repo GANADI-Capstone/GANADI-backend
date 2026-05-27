@@ -30,6 +30,7 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+        required: false
     volumes:
       - uploads_data:/app/uploads
     networks:
@@ -64,7 +65,7 @@ services:
   # ── 프론트엔드 ────────────────────────────────────────────────────────────
   frontend:
     build:
-      context: ../frontend
+      context: ../GANADI-frontend
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-}
