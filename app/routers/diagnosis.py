@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
-from typing import List, Any, Dict, Optional
+from typing import List, Any, Dict, Optional, Union
 import httpx
 
 from app.database import get_db
-from app.models import DiagnosisResult, Pet, User
+from app.models import DiagnosisResult, Pet, User, Vet, Opinion
 from app.schemas import DiagnosisResponse
-from app.routers.dependencies import get_current_user
+from app.routers.dependencies import get_current_user, get_current_user_or_vet
 from app.core.config import settings
 from app.core.storage import save_image
 from app.core.security import decode_access_token
@@ -418,9 +418,9 @@ def get_diagnosis_history(
 def get_diagnosis_detail(
     diagnosis_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    actor: Union[User, Vet] = Depends(get_current_user_or_vet)
 ):
-    """진단 결과 상세 조회"""
+    """진단 결과 상세 조회 (보호자 본인 또는 소견 요청을 받은 수의사만 접근 가능)"""
 
     diagnosis = (
         db.query(DiagnosisResult)
@@ -435,14 +435,28 @@ def get_diagnosis_detail(
             detail="진단 결과를 찾을 수 없습니다."
         )
 
-    # 소유자 확인 — joinedload 로 이미 pet 가 로드되어 있으므로 추가 쿼리 없음
-    if not diagnosis.pet or diagnosis.pet.owner_id != current_user.id:
+    # 수의사인 경우: 해당 진단에 연결된 소견 요청의 담당 수의사인지 확인
+    if isinstance(actor, Vet):
+        opinion = db.query(Opinion).filter(
+            Opinion.diagnosis_id == diagnosis_id,
+            Opinion.vet_id == actor.id
+        ).first()
+        if not opinion:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="접근 권한이 없습니다."
+            )
+        return diagnosis
+
+    # 보호자인 경우: 본인 소유 반려동물의 진단인지 확인
+    if not diagnosis.pet or diagnosis.pet.owner_id != actor.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="접근 권한이 없습니다."
         )
 
     return diagnosis
+
 
 
 @router.delete("/{diagnosis_id}", status_code=status.HTTP_204_NO_CONTENT)

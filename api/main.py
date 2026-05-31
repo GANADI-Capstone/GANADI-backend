@@ -15,6 +15,7 @@ import torch
 import numpy as np
 from PIL import Image
 import io
+import json
 import logging
 import os
 import sys
@@ -816,7 +817,6 @@ JSON만 출력하고 다른 설명은 불필요합니다."""
         
         response_text = response_text.strip()
         
-        import json
         report_data = json.loads(response_text)
         
         # disease_analysis가 없으면 빈 dict 사용
