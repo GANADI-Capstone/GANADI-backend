@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     
     # AI Server
     AI_SERVER_URL: str = "http://localhost:8000"
+
+    # 학습 데이터 수집 (Phase 1) — false면 수집 로직·검증 전부 비활성 (기본)
+    COLLECTION_ENABLED: bool = False
     
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"

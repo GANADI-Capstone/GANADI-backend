@@ -291,6 +291,54 @@ class ReportMessage(Base):
     report = relationship("AdminReport", back_populates="messages")
 
 
+class CollectedSample(Base):
+    """학습 데이터 수집 (동의 opt-in, 검수 후 export)."""
+
+    __tablename__ = "collected_samples"
+
+    id = Column(Integer, primary_key=True, index=True)
+    diagnosis_id = Column(
+        Integer, ForeignKey("diagnosis_results.id"), nullable=True, unique=True, index=True,
+    )
+    source = Column(String(32), nullable=False, default="user_upload")
+
+    image_url = Column(String(500), nullable=False)
+    image_storage_key = Column(String(500), nullable=True)
+
+    animal_type = Column(Enum(SpeciesEnum), nullable=False)
+    capture_device = Column(String(32), nullable=False)
+    pet_breed = Column(String(100), nullable=True)
+    pet_age = Column(Integer, nullable=True)
+    pet_gender = Column(String(20), nullable=True)
+
+    ai_predictions = Column(JSON, nullable=False)
+    ai_top3 = Column(JSON, nullable=False)
+    ai_all_diseases = Column(JSON, nullable=False)
+    ai_main_disease = Column(String(100), nullable=True)
+    ai_is_normal = Column(Boolean, nullable=False, default=False)
+    ai_model_version = Column(String(64), nullable=True)
+    ai_checkpoint = Column(String(255), nullable=True)
+
+    training_consent = Column(Boolean, nullable=False, default=True)
+    consent_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    consent_version = Column(String(32), nullable=False, default="v1")
+
+    label_status = Column(String(32), nullable=False, default="pending", index=True)
+    confirmed_disease = Column(String(100), nullable=True)
+    confirmed_severity = Column(String(32), nullable=True)
+    reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    reject_reason = Column(Text, nullable=True)
+
+    exported_at = Column(DateTime, nullable=True)
+    export_batch_id = Column(String(64), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    diagnosis = relationship("DiagnosisResult", backref="collected_sample")
+
+
 class PasswordResetToken(Base):
     """비밀번호 재설정 1회용 토큰 (원문은 DB에 저장하지 않음)"""
 

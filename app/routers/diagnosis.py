@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Any, Dict, Optional, Union
 import httpx
+import logging
 
 from app.database import get_db
 from app.models import DiagnosisResult, Pet, User, Vet, Opinion
@@ -10,10 +11,16 @@ from app.schemas import DiagnosisResponse
 from app.routers.dependencies import get_current_user, get_current_user_or_vet
 from app.core.config import settings
 from app.core.storage import save_image
+from app.services.sample_collection import (
+    ai_request_data,
+    try_insert_collected_sample,
+    validate_collection_request,
+)
 from app.core.security import decode_access_token
 from fastapi import Query, Request
 
 router = APIRouter(prefix="/diagnosis", tags=["diagnosis"])
+logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = frozenset({"image/jpeg", "image/png"})
@@ -47,6 +54,9 @@ def _validate_image_upload(content_type: Optional[str], body: bytes) -> None:
 async def analyze_pet_eye(
     pet_id: int,
     image: UploadFile = File(...),
+    training_consent: bool = Form(False),
+    capture_device: Optional[str] = Form(None),
+    consent_version: str = Form("v1"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -69,6 +79,8 @@ async def analyze_pet_eye(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="반려동물을 찾을 수 없습니다."
         )
+
+    validate_collection_request(training_consent, capture_device)
     
     # AI 서버 호출
     try:
@@ -85,7 +97,7 @@ async def analyze_pet_eye(
         async with httpx.AsyncClient(timeout=30.0) as client:
             # multipart/form-data로 file과 animal_type 전송
             files = {"file": (image.filename, image_bytes, image.content_type)}
-            data = {"animal_type": animal_type}
+            data = ai_request_data(animal_type, capture_device)
             
             response = await client.post(
                 f"{settings.AI_SERVER_URL}/api/ai/analyze",
@@ -114,6 +126,24 @@ async def analyze_pet_eye(
     db.add(db_diagnosis)
     db.commit()
     db.refresh(db_diagnosis)
+
+    # 수집: 진단 저장·응답과 격리 (실패해도 200)
+    try:
+        try_insert_collected_sample(
+            db,
+            diagnosis=db_diagnosis,
+            pet=pet,
+            image_url=image_url,
+            ai_result=ai_result,
+            training_consent=training_consent,
+            capture_device=capture_device or "",
+            consent_version=consent_version,
+        )
+    except Exception:
+        logger.exception(
+            "collected_samples post-process failed diagnosis_id=%s",
+            db_diagnosis.id,
+        )
     
     return db_diagnosis
 
