@@ -105,6 +105,82 @@ def test_get_collected_sample_detail(client: TestClient, sample_row, admin_heade
     assert len(body["ai_top3"]) == 1
 
 
+def test_get_collected_sample_detail_requires_admin(
+    client: TestClient, sample_row, auth_headers,
+):
+    resp = client.get(
+        f"/api/admin/collected-samples/{sample_row.id}",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 403
+
+
+def test_patch_requires_admin(client: TestClient, sample_row, auth_headers):
+    resp = client.patch(
+        f"/api/admin/collected-samples/{sample_row.id}",
+        headers=auth_headers,
+        json={"label_status": "confirmed", "confirmed_disease": "결막염"},
+    )
+    assert resp.status_code == 403
+
+
+def test_patch_not_found_returns_404(client: TestClient, admin_headers):
+    resp = client.patch(
+        "/api/admin/collected-samples/99999",
+        headers=admin_headers,
+        json={"label_status": "rejected", "reject_reason": "테스트"},
+    )
+    assert resp.status_code == 404
+
+
+def test_patch_invalid_label_status_returns_422(client: TestClient, sample_row, admin_headers):
+    resp = client.patch(
+        f"/api/admin/collected-samples/{sample_row.id}",
+        headers=admin_headers,
+        json={"label_status": "invalid_status"},
+    )
+    assert resp.status_code == 422
+
+
+def test_patch_does_not_modify_diagnosis_results(
+    client: TestClient, db_session, sample_row, admin_headers,
+):
+    """PATCH는 collected_samples만 변경하고 diagnosis_results는 건드리지 않는다."""
+    diag = db_session.query(DiagnosisResult).filter(
+        DiagnosisResult.id == sample_row.diagnosis_id,
+    ).one()
+    before = {
+        "main_disease": diag.main_disease,
+        "predictions": dict(diag.predictions or {}),
+        "image_url": diag.image_url,
+        "is_normal": diag.is_normal,
+    }
+
+    resp = client.patch(
+        f"/api/admin/collected-samples/{sample_row.id}",
+        headers=admin_headers,
+        json={
+            "label_status": "confirmed",
+            "confirmed_disease": "백내장",
+            "confirmed_severity": "성숙",
+        },
+    )
+    assert resp.status_code == 200
+
+    db_session.expire_all()
+    diag_after = db_session.query(DiagnosisResult).filter(
+        DiagnosisResult.id == sample_row.diagnosis_id,
+    ).one()
+    assert diag_after.main_disease == before["main_disease"]
+    assert diag_after.predictions == before["predictions"]
+    assert diag_after.image_url == before["image_url"]
+    assert diag_after.is_normal == before["is_normal"]
+
+    sample = db_session.query(CollectedSample).filter(CollectedSample.id == sample_row.id).one()
+    assert sample.label_status == "confirmed"
+    assert sample.confirmed_disease == "백내장"
+
+
 def test_patch_confirm_sample(client: TestClient, db_session, sample_row, admin_headers, admin_user):
     resp = client.patch(
         f"/api/admin/collected-samples/{sample_row.id}",
