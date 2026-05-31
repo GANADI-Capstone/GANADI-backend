@@ -5,7 +5,16 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models import AdminReport, DiagnosisResult, Opinion, Pet, User, Vet, SpeciesEnum
+from app.models import (
+    AdminReport,
+    CollectedSample,
+    DiagnosisResult,
+    Opinion,
+    Pet,
+    User,
+    Vet,
+    SpeciesEnum,
+)
 from app.routers.dependencies import get_current_admin
 from pydantic import BaseModel, Field
 
@@ -691,3 +700,307 @@ def reject_vet(
     db.commit()
     db.refresh(vet)
     return vet
+
+
+# ==================== 학습 데이터 수집 (collected_samples) ====================
+
+ALLOWED_LABEL_STATUSES = frozenset({"pending", "confirmed", "rejected"})
+ALLOWED_CAPTURE_DEVICES = frozenset({"스마트폰", "검안경", "일반카메라"})
+
+
+class CollectedSampleListItem(BaseModel):
+    id: int
+    diagnosis_id: Optional[int] = None
+    image_url: str
+    animal_type: str
+    capture_device: str
+    pet_breed: Optional[str] = None
+    pet_age: Optional[int] = None
+    pet_gender: Optional[str] = None
+    ai_main_disease: Optional[str] = None
+    ai_is_normal: bool = False
+    ai_top3: list = []
+    label_status: str
+    confirmed_disease: Optional[str] = None
+    confirmed_severity: Optional[str] = None
+    consent_at: datetime
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CollectedSampleDetail(CollectedSampleListItem):
+    ai_predictions: dict = {}
+    ai_all_diseases: dict = {}
+    ai_model_version: Optional[str] = None
+    ai_checkpoint: Optional[str] = None
+    reviewer_id: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+    reject_reason: Optional[str] = None
+    consent_version: str = "v1"
+    source: str = "user_upload"
+
+
+class CollectedSampleListResponse(BaseModel):
+    total: int
+    items: List[CollectedSampleListItem]
+
+
+class CollectedSamplePatch(BaseModel):
+    label_status: str = Field(..., pattern="^(pending|confirmed|rejected)$")
+    confirmed_disease: Optional[str] = Field(None, max_length=100)
+    confirmed_severity: Optional[str] = Field(None, max_length=32)
+    reject_reason: Optional[str] = Field(None, max_length=2000)
+
+
+class GapStatRow(BaseModel):
+    animal_type: str
+    capture_device: str
+    disease: str
+    severity: Optional[str] = None
+    count: int
+    source: str  # confirmed | pending_ai
+
+
+class CollectedSampleGapStatsResponse(BaseModel):
+    status_counts: dict
+    confirmed: List[GapStatRow]
+    pending_ai: List[GapStatRow]
+
+
+def _sample_to_list_item(row: CollectedSample) -> CollectedSampleListItem:
+    animal = row.animal_type.value if hasattr(row.animal_type, "value") else str(row.animal_type)
+    return CollectedSampleListItem(
+        id=row.id,
+        diagnosis_id=row.diagnosis_id,
+        image_url=row.image_url,
+        animal_type=animal,
+        capture_device=row.capture_device,
+        pet_breed=row.pet_breed,
+        pet_age=row.pet_age,
+        pet_gender=row.pet_gender,
+        ai_main_disease=row.ai_main_disease,
+        ai_is_normal=row.ai_is_normal,
+        ai_top3=row.ai_top3 or [],
+        label_status=row.label_status,
+        confirmed_disease=row.confirmed_disease,
+        confirmed_severity=row.confirmed_severity,
+        consent_at=row.consent_at,
+        created_at=row.created_at,
+    )
+
+
+def _sample_to_detail(row: CollectedSample) -> CollectedSampleDetail:
+    base = _sample_to_list_item(row)
+    return CollectedSampleDetail(
+        **base.model_dump(),
+        ai_predictions=row.ai_predictions or {},
+        ai_all_diseases=row.ai_all_diseases or {},
+        ai_model_version=row.ai_model_version,
+        ai_checkpoint=row.ai_checkpoint,
+        reviewer_id=row.reviewer_id,
+        reviewed_at=row.reviewed_at,
+        reject_reason=row.reject_reason,
+        consent_version=row.consent_version,
+        source=row.source,
+    )
+
+
+@router.get("/collected-samples/stats/gap", response_model=CollectedSampleGapStatsResponse)
+def get_collected_samples_gap_stats(
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """질환×장비×중증도 갭 집계 (confirmed + pending AI 참고)."""
+    status_rows = (
+        db.query(CollectedSample.label_status, func.count(CollectedSample.id))
+        .group_by(CollectedSample.label_status)
+        .all()
+    )
+    status_counts = {row[0]: row[1] for row in status_rows}
+
+    confirmed_rows = (
+        db.query(
+            CollectedSample.animal_type,
+            CollectedSample.capture_device,
+            CollectedSample.confirmed_disease,
+            CollectedSample.confirmed_severity,
+            func.count(CollectedSample.id),
+        )
+        .filter(
+            CollectedSample.label_status == "confirmed",
+            CollectedSample.confirmed_disease.isnot(None),
+        )
+        .group_by(
+            CollectedSample.animal_type,
+            CollectedSample.capture_device,
+            CollectedSample.confirmed_disease,
+            CollectedSample.confirmed_severity,
+        )
+        .all()
+    )
+    confirmed = [
+        GapStatRow(
+            animal_type=row[0].value if hasattr(row[0], "value") else str(row[0]),
+            capture_device=row[1],
+            disease=row[2],
+            severity=row[3],
+            count=row[4],
+            source="confirmed",
+        )
+        for row in confirmed_rows
+    ]
+
+    pending_rows = (
+        db.query(
+            CollectedSample.animal_type,
+            CollectedSample.capture_device,
+            CollectedSample.ai_main_disease,
+            func.count(CollectedSample.id),
+        )
+        .filter(CollectedSample.label_status == "pending")
+        .group_by(
+            CollectedSample.animal_type,
+            CollectedSample.capture_device,
+            CollectedSample.ai_main_disease,
+        )
+        .all()
+    )
+    pending_ai = [
+        GapStatRow(
+            animal_type=row[0].value if hasattr(row[0], "value") else str(row[0]),
+            capture_device=row[1],
+            disease=row[2] or "(정상/미분류)",
+            severity=None,
+            count=row[3],
+            source="pending_ai",
+        )
+        for row in pending_rows
+    ]
+
+    return CollectedSampleGapStatsResponse(
+        status_counts=status_counts,
+        confirmed=confirmed,
+        pending_ai=pending_ai,
+    )
+
+
+@router.get("/collected-samples", response_model=CollectedSampleListResponse)
+def list_collected_samples(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    label_status: Optional[str] = Query(default=None),
+    capture_device: Optional[str] = Query(default=None),
+    animal_type: Optional[str] = Query(default=None, description="dog | cat"),
+    disease: Optional[str] = Query(default=None, description="AI main 또는 확정 질환 부분 일치"),
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """수집 샘플 목록 (관리자 검수 큐)."""
+    query = db.query(CollectedSample)
+
+    if label_status:
+        if label_status not in ALLOWED_LABEL_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="label_status는 pending, confirmed, rejected 중 하나여야 합니다.",
+            )
+        query = query.filter(CollectedSample.label_status == label_status)
+
+    if capture_device:
+        if capture_device not in ALLOWED_CAPTURE_DEVICES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="capture_device는 스마트폰, 검안경, 일반카메라 중 하나여야 합니다.",
+            )
+        query = query.filter(CollectedSample.capture_device == capture_device)
+
+    if animal_type:
+        if animal_type not in ("dog", "cat"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="animal_type은 dog 또는 cat 이어야 합니다.",
+            )
+        query = query.filter(CollectedSample.animal_type == animal_type)
+
+    if disease:
+        like = f"%{disease}%"
+        query = query.filter(
+            (CollectedSample.ai_main_disease.ilike(like))
+            | (CollectedSample.confirmed_disease.ilike(like))
+        )
+
+    total = query.count()
+    rows = (
+        query.order_by(CollectedSample.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return CollectedSampleListResponse(
+        total=total,
+        items=[_sample_to_list_item(r) for r in rows],
+    )
+
+
+@router.get("/collected-samples/{sample_id}", response_model=CollectedSampleDetail)
+def get_collected_sample_detail(
+    sample_id: int,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """수집 샘플 상세 (이미지·AI 스냅샷 전체)."""
+    row = db.query(CollectedSample).filter(CollectedSample.id == sample_id).first()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="수집 샘플을 찾을 수 없습니다.",
+        )
+    return _sample_to_detail(row)
+
+
+@router.patch("/collected-samples/{sample_id}", response_model=CollectedSampleDetail)
+def patch_collected_sample(
+    sample_id: int,
+    payload: CollectedSamplePatch,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """검수: confirm / reject / pending 복귀."""
+    row = db.query(CollectedSample).filter(CollectedSample.id == sample_id).first()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="수집 샘플을 찾을 수 없습니다.",
+        )
+
+    if payload.label_status == "confirmed":
+        if not payload.confirmed_disease:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="확정 시 confirmed_disease가 필요합니다.",
+            )
+        row.confirmed_disease = payload.confirmed_disease
+        row.confirmed_severity = payload.confirmed_severity
+        row.reject_reason = None
+        row.reviewer_id = admin.id
+        row.reviewed_at = datetime.utcnow()
+    elif payload.label_status == "rejected":
+        row.confirmed_disease = None
+        row.confirmed_severity = None
+        row.reject_reason = payload.reject_reason or "관리자 거절"
+        row.reviewer_id = admin.id
+        row.reviewed_at = datetime.utcnow()
+    else:
+        row.confirmed_disease = None
+        row.confirmed_severity = None
+        row.reject_reason = None
+        row.reviewer_id = None
+        row.reviewed_at = None
+
+    row.label_status = payload.label_status
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return _sample_to_detail(row)
