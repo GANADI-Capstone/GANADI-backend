@@ -38,6 +38,8 @@ COPY api ./api
 COPY models/classifier ./models/classifier
 
 ENV PYTHONPATH=/app
+ENV MODEL_VERSION=random_split
+ENV MODEL_CHECKPOINT_DIR=models/classifier/checkpoints
 
 EXPOSE 8000
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
