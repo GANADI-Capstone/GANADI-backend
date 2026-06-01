@@ -415,6 +415,8 @@ def _to_detail_response(opinion: Opinion, vet: Optional[Vet]) -> OpinionDetailRe
         vet_name=vet.name if vet else None,
         hospital_name=vet.hospital_name if vet else None,
         pet_name=pet.name if pet else None,
+        pet_age=pet.age if pet else None,
+        pet_species=pet.species.value if pet and pet.species else None,
         owner_name=owner.name if owner else None,
         diagnosis=diagnosis,
     )

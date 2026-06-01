@@ -216,6 +216,8 @@ class OpinionDetailResponse(OpinionResponse):
     vet_name: Optional[str] = None
     hospital_name: Optional[str] = None
     pet_name: Optional[str] = None
+    pet_age: Optional[int] = None
+    pet_species: Optional[str] = None
     owner_name: Optional[str] = None
     diagnosis: Optional[DiagnosisResponse] = None
 
