@@ -227,6 +227,8 @@ async def download_diagnosis_pdf(
         "animal_type": animal_type,
         "pet_name": pet.name,
         "predictions": predictions_payload,
+        "pet_breed": pet.breed,
+        "pet_age": pet.age,
     }
 
     timeout = httpx.Timeout(120.0, connect=30.0)
@@ -254,12 +256,15 @@ async def download_diagnosis_pdf(
                 "pet_name": pet.name,
                 "animal_type": animal_type,
                 "predictions": predictions_payload,
+                "pet_breed": pet.breed,
+                "pet_age": pet.age,
                 "report": {
                     "summary": report.get("summary", ""),
                     "disease_analysis": report.get("disease_analysis") or {},
                     "visit_urgency": report.get("visit_urgency", "정기검진"),
                     "vet_required": bool(report.get("vet_required", False)),
                     "precautions": report.get("precautions") or [],
+                    "breed_age_notes": report.get("breed_age_notes"),
                 },
             }
 
@@ -298,6 +303,7 @@ async def download_diagnosis_pdf(
         "visit_urgency": report.get("visit_urgency", "정기검진"),
         "vet_required": bool(report.get("vet_required", False)),
         "precautions": report.get("precautions") or [],
+        "breed_age_notes": report.get("breed_age_notes"),
     }
     diagnosis.report_pdf_url = f"/api/diagnosis/{diagnosis_id}/pdf"
     db.commit()
@@ -352,6 +358,8 @@ async def get_diagnosis_report(
         "animal_type": diagnosis.animal_type.value,
         "pet_name": diagnosis.pet.name,
         "predictions": predictions_payload,
+        "pet_breed": diagnosis.pet.breed,
+        "pet_age": diagnosis.pet.age,
     }
     timeout = httpx.Timeout(120.0, connect=30.0)
     try:
@@ -377,6 +385,7 @@ async def get_diagnosis_report(
         "visit_urgency": report.get("visit_urgency", "정기검진"),
         "vet_required": bool(report.get("vet_required", False)),
         "precautions": report.get("precautions") or [],
+        "breed_age_notes": report.get("breed_age_notes"),
     }
     db.commit()
 

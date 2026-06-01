@@ -49,6 +49,7 @@ from api.inference_onnx import (
     uses_onnx_backend,
 )
 from models.classifier.dataset import get_transforms
+from api.breed_health_hints import build_breed_age_health_notes
 
 # .env 파일 로드
 load_dotenv()
@@ -131,6 +132,8 @@ class ReportRequest(BaseModel):
     animal_type: str
     pet_name: str
     predictions: Dict[str, DiseasePrediction]
+    pet_breed: Optional[str] = None
+    pet_age: Optional[int] = None
 
 
 class ReportResponse(BaseModel):
@@ -140,6 +143,7 @@ class ReportResponse(BaseModel):
     visit_urgency: str
     vet_required: bool
     precautions: List[str]
+    breed_age_notes: Optional[str] = None
 
 
 class PDFReportData(BaseModel):
@@ -149,6 +153,7 @@ class PDFReportData(BaseModel):
     visit_urgency: str
     vet_required: bool
     precautions: List[str]
+    breed_age_notes: Optional[str] = None
 
 
 class PDFRequest(BaseModel):
@@ -157,6 +162,8 @@ class PDFRequest(BaseModel):
     animal_type: str
     predictions: Dict[str, DiseasePrediction]
     report: PDFReportData
+    pet_breed: Optional[str] = None
+    pet_age: Optional[int] = None
 
 
 def get_device():
@@ -447,16 +454,27 @@ def generate_pdf(request: PDFRequest) -> str:
     animal_name = "강아지" if request.animal_type == "dog" else "고양이"
     title = Paragraph(f"반려동물 AI 스크리닝 결과", title_style)
     story.append(title)
-    
+
+    breed_line = f" · 품종: {request.pet_breed}" if request.pet_breed else ""
+    age_line = f" · {request.pet_age}세" if request.pet_age is not None else ""
     date_text = Paragraph(
-        f"검사일: {datetime.now().strftime('%Y년 %m월 %d일')}<br/>반려동물: {request.pet_name} ({animal_name})",
-        normal_style
+        f"검사일: {datetime.now().strftime('%Y년 %m월 %d일')}<br/>"
+        f"반려동물: {request.pet_name} ({animal_name}{breed_line}{age_line})",
+        normal_style,
     )
     story.append(date_text)
     story.append(Spacer(1, 10*mm))
-    
-    # 2. 질환별 위험도 표
-    story.append(Paragraph("질환별 위험도 평가", heading_style))
+
+    # 2. 질환별 위험도 표 (전체 — 앱 화면에는 Top 3만 표시)
+    story.append(Paragraph("질환별 위험도 평가 (전체)", heading_style))
+    story.append(
+        Paragraph(
+            "아래 표는 AI가 검사한 모든 질환별 이상 가능성(%)입니다. "
+            "앱 화면에서는 요약·Top 3만 제공합니다.",
+            normal_style,
+        )
+    )
+    story.append(Spacer(1, 4*mm))
     
     # Table 데이터를 Paragraph로 감싸서 한글 폰트 보장
     from reportlab.platypus import Paragraph as P
@@ -504,7 +522,18 @@ def generate_pdf(request: PDFRequest) -> str:
     ]))
     story.append(table)
     story.append(Spacer(1, 10*mm))
-    
+
+    breed_notes = request.report.breed_age_notes or _breed_age_notes_for_request(
+        request.animal_type, request.pet_breed, request.pet_age
+    )
+    if breed_notes:
+        story.append(Paragraph("품종·연령 참고 (교육용)", heading_style))
+        for line in breed_notes.split("\n"):
+            if line.strip():
+                story.append(Paragraph(line.strip(), normal_style))
+                story.append(Spacer(1, 2*mm))
+        story.append(Spacer(1, 6*mm))
+
     # 3. 종합 소견
     story.append(Paragraph("종합 소견", heading_style))
     summary_text = Paragraph(request.report.summary, normal_style)
@@ -570,6 +599,22 @@ def generate_pdf(request: PDFRequest) -> str:
     doc.build(story)
     
     return pdf_path
+
+
+def _top_disease_names(predictions: Dict[str, DiseasePrediction], n: int = 3) -> List[str]:
+    ranked = sorted(
+        predictions.items(),
+        key=lambda item: (-float(item[1].confidence), item[0]),
+    )
+    return [name for name, _ in ranked[:n]]
+
+
+def _breed_age_notes_for_request(
+    animal_type: str,
+    pet_breed: Optional[str],
+    pet_age: Optional[int],
+) -> str:
+    return build_breed_age_health_notes(animal_type, pet_breed, pet_age)
 
 
 @app.on_event("startup")
@@ -746,7 +791,14 @@ async def generate_report(request: ReportRequest):
                 detected_diseases.append(f"{disease} ({pred.confidence}%)")
         
         animal_name = "강아지" if request.animal_type == "dog" else "고양이"
-        
+        top3_names = _top_disease_names(request.predictions, 3)
+        top3_text = ", ".join(top3_names) if top3_names else "없음"
+        breed_age_notes = _breed_age_notes_for_request(
+            request.animal_type, request.pet_breed, request.pet_age
+        )
+        breed_line = f"- 품종: {request.pet_breed}\n" if request.pet_breed else ""
+        age_line = f"- 나이: {request.pet_age}세\n" if request.pet_age is not None else ""
+
         # Claude API 프롬프트 구성
         prompt = f"""당신은 반려동물 안구 건강 전문가입니다. 아래 AI 스크리닝 결과를 바탕으로 보호자를 위한 소견서를 작성해주세요.
 
@@ -755,22 +807,28 @@ async def generate_report(request: ReportRequest):
 2. 최종 진단은 수의사만 가능하다는 점을 명확히 하세요.
 3. 보호자가 이해하기 쉬운 언어로 작성하세요.
 4. 객관적이고 정확한 정보를 제공하되, 과도한 불안을 조성하지 마세요.
+5. disease_analysis에는 **Top 3 의심 질환({top3_text})만** 포함하세요. 나머지 질환은 생략하세요.
 
 **반려동물 정보:**
 - 이름: {request.pet_name}
 - 종류: {animal_name}
+{breed_line}{age_line}
+**품종·연령 참고 (요약에 자연스럽게 반영 가능):**
+{breed_age_notes}
 
-**AI 스크리닝 결과:**
+**AI 스크리닝 결과 (전체, 참고용):**
 {predictions_text}
+
+**Top 3 의심 질환 (이상 가능성 순):** {top3_text}
 
 **검출된 이상 소견:** {', '.join(detected_diseases) if detected_diseases else '없음 (정상)'}
 
 다음 형식으로 JSON을 작성해주세요:
 
 {{
-  "summary": "전체 소견을 2-3문장으로 요약. '진단' 대신 'AI 스크리닝 소견' 표현 사용",
+  "summary": "전체 소견을 2-3문장으로 요약. '진단' 대신 'AI 스크리닝 소견' 표현 사용. 품종·나이 맥락이 있으면 1문장 포함",
   "disease_analysis": {{
-    "질환명1": "해당 질환의 위험도 평가 및 설명 (1-2문장)",
+    "질환명1": "Top3 중 해당 질환 설명 (1-2문장)",
     "질환명2": "..."
   }},
   "visit_urgency": "즉시" 또는 "1주 이내" 또는 "1개월 이내" 또는 "정기검진",
@@ -822,6 +880,13 @@ JSON만 출력하고 다른 설명은 불필요합니다."""
         # disease_analysis가 없으면 빈 dict 사용
         if "disease_analysis" not in report_data:
             report_data["disease_analysis"] = {}
+
+        # Top 3 외 질환 설명 제거 (앱·PDF 요약 일관성)
+        allowed = set(top3_names)
+        report_data["disease_analysis"] = {
+            k: v for k, v in report_data["disease_analysis"].items() if k in allowed
+        }
+        report_data["breed_age_notes"] = breed_age_notes
         
         logger.info(f"리포트 생성 완료: {request.pet_name}")
         
