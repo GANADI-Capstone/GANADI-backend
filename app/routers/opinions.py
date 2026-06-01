@@ -20,7 +20,7 @@
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -410,79 +410,40 @@ async def download_opinion_pdf(
             detail="아직 작성된 소견이 없어 PDF를 만들 수 없습니다.",
         )
 
-    # 예측 데이터 변환
-    def _predictions_payload(raw: Any) -> Dict[str, Dict[str, Any]]:
-        if not raw or not isinstance(raw, dict):
-            return {}
-        out: Dict[str, Dict[str, Any]] = {}
-        for disease, pred in raw.items():
-            if not isinstance(pred, dict):
-                continue
-            label = pred.get("label")
-            conf = pred.get("confidence")
-            if label is None or conf is None:
-                continue
-            out[str(disease)] = {"label": str(label), "confidence": float(conf)}
-        return out
-
-    predictions_payload = _predictions_payload(diagnosis.predictions if diagnosis else None)
-    if not predictions_payload:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="저장된 예측 결과가 없어 PDF를 만들 수 없습니다.",
-        )
+    # 진단 요약 정보 (is_normal, main_disease, main_confidence)
+    is_normal = bool(getattr(diagnosis, "is_normal", False)) if diagnosis else True
+    main_disease = getattr(diagnosis, "main_disease", None) if diagnosis else None
+    main_confidence = getattr(diagnosis, "main_confidence", None) if diagnosis else None
 
     animal_type = diagnosis.animal_type.value if diagnosis and diagnosis.animal_type else "dog"
 
-    timeout = httpx.Timeout(120.0, connect=30.0)
+    # 소견서 작성일
+    answered_at_str = None
+    if opinion.answered_at:
+        answered_at_str = opinion.answered_at.strftime("%Y년 %m월 %d일")
+
+    opinion_pdf_body = {
+        "pet_name": pet.name,
+        "pet_species": animal_type,
+        "pet_age": pet.age,
+        "pet_breed": getattr(pet, "breed", None),
+        "vet_name": opinion.vet.name if opinion.vet else None,
+        "hospital_name": opinion.vet.hospital_name if opinion.vet else None,
+        "opinion_content": opinion.content,
+        "recommendation": opinion.recommendation,
+        "visit_required": bool(opinion.visit_required),
+        "answered_at": answered_at_str,
+        "main_disease": main_disease,
+        "main_confidence": main_confidence,
+        "is_normal": is_normal,
+    }
+
+    timeout = httpx.Timeout(60.0, connect=30.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            # report_data가 캐시돼 있으면 재사용, 없으면 AI 서버에서 생성
-            if diagnosis.report_data and diagnosis.report_data.get("summary"):
-                report = diagnosis.report_data
-            else:
-                report_body = {
-                    "animal_type": animal_type,
-                    "pet_name": pet.name,
-                    "predictions": predictions_payload,
-                    "pet_breed": pet.breed,
-                    "pet_age": pet.age,
-                }
-                report_resp = await client.post(
-                    f"{settings.AI_SERVER_URL}/api/ai/report",
-                    json=report_body,
-                )
-                if report_resp.status_code >= 400:
-                    detail = report_resp.text
-                    try:
-                        detail = report_resp.json().get("detail", detail)
-                    except Exception:
-                        pass
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail=f"AI 리포트 생성 실패: {detail}",
-                    )
-                report = report_resp.json()
-
-            pdf_body = {
-                "pet_name": pet.name,
-                "animal_type": animal_type,
-                "predictions": predictions_payload,
-                "pet_breed": pet.breed,
-                "pet_age": pet.age,
-                "report": {
-                    "summary": report.get("summary", ""),
-                    "disease_analysis": report.get("disease_analysis") or {},
-                    "visit_urgency": report.get("visit_urgency", "정기검진"),
-                    "vet_required": bool(report.get("vet_required", False)),
-                    "precautions": report.get("precautions") or [],
-                    "breed_age_notes": report.get("breed_age_notes"),
-                },
-            }
-
             pdf_resp = await client.post(
-                f"{settings.AI_SERVER_URL}/api/ai/pdf",
-                json=pdf_body,
+                f"{settings.AI_SERVER_URL}/api/ai/opinion-pdf",
+                json=opinion_pdf_body,
             )
             if pdf_resp.status_code >= 400:
                 detail = pdf_resp.text
@@ -492,7 +453,7 @@ async def download_opinion_pdf(
                     pass
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=f"AI PDF 생성 실패: {detail}",
+                    detail=f"소견서 PDF 생성 실패: {detail}",
                 )
 
             content = pdf_resp.content
@@ -508,7 +469,7 @@ async def download_opinion_pdf(
             detail=f"AI 서버 연결 오류: {str(e)}",
         )
 
-    filename = f"opinion_{opinion_id}.pdf"
+    filename = f"소견서_{opinion_id}.pdf"
     return Response(
         content=content,
         media_type="application/pdf",
