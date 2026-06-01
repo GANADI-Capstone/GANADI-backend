@@ -469,12 +469,14 @@ async def download_opinion_pdf(
             detail=f"AI 서버 연결 오류: {str(e)}",
         )
 
+    from urllib.parse import quote
     filename = f"소견서_{opinion_id}.pdf"
+    encoded = quote(filename)
     return Response(
         content=content,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": f"attachment; filename=\"opinion_{opinion_id}.pdf\"; filename*=UTF-8''{encoded}",
         },
     )
 
